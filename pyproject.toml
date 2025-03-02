@@ -1,0 +1,15 @@
+[project]
+name = "astra-multivector"
+version = "0.1.0"
+description = "Multivector CQL Tables using the DataAPI from AstraDB"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "astrapy==2.0.0rc0",
+    "langchain>=0.3.19",
+    "pydantic>=2.10.6",
+    "python-dotenv>=1.0.1",
+    "sentence-transformers>=3.4.1",
+    "tqdm>=4.67.1",
+    "voyageai>=0.3.2",
+]
