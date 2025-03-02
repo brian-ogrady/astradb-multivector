@@ -1,4 +1,4 @@
-from .gutenberg_text_vector_table import AstraMultiVectorTable
+from .astra_multi_vector_table import AstraMultiVectorTable
 from .vector_column_options import VectorColumnOptions
 
 
