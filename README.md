@@ -1,144 +1,207 @@
-# Vector Search with Rerankers
+# AstraMultiVector
 
-This repository demonstrates how to implement a two-stage retrieval system using vector search followed by reranking.
+A Python library for creating and using multi-vector tables in DataStax Astra DB, supporting both client-side and server-side embedding generation with support for both synchronous and asynchronous operations.
 
-## Why Rerankers Matter for Enterprise Search
+## Overview
 
-Rerankers provide significant improvements to vector search by:
-- Analyzing both the query and document together at search time
-- Using cross-attention to match specific parts of queries to specific parts of documents
-- Improving relevance for complex, multi-faceted queries
-- Prioritizing results based on actual relevance rather than just semantic similarity
+AstraMultiVector provides classes to:
+- Create database tables with multiple vector columns
+- Associate each vector column with either:
+  - Client-side embeddings using sentence-transformers
+  - Server-side embeddings using Astra's Vectorize feature
+- Search across any vector column using similarity search
+- Support both synchronous and asynchronous operations
 
-This two-stage approach combines the efficiency of vector search with the precision of rerankers.
-
-## Repository Structure
-
-- `vector_column_options.py`: Configurations for vector columns in the database
-- `gutenberg_text_vector_table.py`: Table creation and vector search functionality
-- `ingestion.py`: Book downloading and processing with concurrent ingestion
+This allows for storing and retrieving text data with multiple embedding representations, which is useful for:
+- Multilingual document search
+- Comparing different embedding models
+- Specialized embeddings for different query types
 
 ## Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/vector-search-rerankers.git
-cd vector-search-rerankers
+# Install from PyPI
+pip install astra-multivector
 
-# Create and activate virtual environment (using uv)
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-uv pip install -r requirements.txt
+# Or install from source
+git clone https://github.com/datastax/astra-multivector.git
+cd astra-multivector
+pip install -e .
 ```
 
-## Configuration
-
-Create a `.env` file with your AstraDB credentials:
-```
-ASTRA_DB_API_ENDPOINT=your-api-endpoint
-ASTRA_DB_APPLICATION_TOKEN=your-token
-```
-
-## Usage
-
-### Setting Up Vector Columns
+## Quick Start
 
 ```python
+from astrapy.database import Database
+from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
 from sentence_transformers import SentenceTransformer
-from vector_column_options import VectorColumnOptions
 
-# Initialize embedding model
-model = SentenceTransformer("intfloat/e5-large-v2")
-
-# Create vector column options for client-side embedding
-vector_options = VectorColumnOptions.from_sentence_transformer(model)
-
-# Alternatively, for server-side vectorization:
-from astrapy.info import VectorServiceOptions
-vector_service_options=ectorColumnOptions.from_vectorize(
-        column_name="openai_embeddings",
-        dimension=1536,
-        vector_service_options=vector_options,
-        table_vector_index_options=index_options,
-)
-
-```
-
-### Creating Tables and Ingesting Data
-
-```python
-from astrapy import database
-from gutenberg_text_vector_table import GutenbergTextVectorTable
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# Initialize database connection
-db = database.Database(
+# Create database connection
+db = Database(
     token="your-token",
-    api_endpoint="your-endpoint"
+    api_endpoint="your-api-endpoint"
 )
 
-# Create table with vector search capabilities
-table = GutenbergTextVectorTable(
-    database=db,
-    table_name="book_vectors",
-    vector_options,
+# Create embedding models and vector options
+english_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+english_options = VectorColumnOptions.from_sentence_transformer(english_model)
+
+# Create the table
+table = AstraMultiVectorTable(
+    db=db,
+    table_name="my_vectors",
+    vector_column_options=[english_options]
 )
 
-# Download and ingest a book
-from ingest import download_and_ingest_book
+# Insert data
+table.insert_chunk("This is a sample text to embed and store.")
 
-text_splitter = RecursiveCharacterTextSplitter(
-    separators=["\n\n", "\n", ". "],
-    chunk_size=500,
-    chunk_overlap=50
-)
-
-download_and_ingest_book(
-    database=db,
-    book_name="moby_dick",
-    book_id=2701,
-    text_splitter=text_splitter,
-    vector_options,
-)
+# Search
+results = table.search_by_text("sample text", limit=5)
+for result in results:
+    print(result["content"])
 ```
 
-### Concurrent Processing of Multiple Books
+## Async Usage
 
 ```python
 import asyncio
-from ingestion import download_and_ingest_multiple_books
+from astrapy.database import AsyncDatabase
+from astrapy import DataAPIClient
+from astra_multivector import AsyncAstraMultiVectorTable, VectorColumnOptions
 
-# Configure books for processing
-books_config = [
-    {
-        "book_name": "moby_dick", 
-        "book_id": 2701,
-        "vector_column_options": [vector_options],
-        "text_splitter": text_splitter
-    },
-    {
-        "book_name": "don_quixote", 
-        "book_id": 996,
-        "vector_column_options": [vector_options],
-        "text_splitter": text_splitter
-    }
-]
+async def main():
+    # Create async database connection
+    async_db = DataAPIClient(
+        token="your-token",
+    ).get_async_database(
+        api_endpoint="your-api-endpoint",
+    )
+    
+    # Create the table with the same vector options
+    async_table = AsyncAstraMultiVectorTable(
+        db=async_db,
+        table_name="my_vectors",
+        vector_column_options=[english_options],
+        default_concurrency_limit=10
+    )
+    
+    # Batch insert with concurrency control
+    await async_table.bulk_insert_chunks(
+        text_chunks=["Text 1", "Text 2", "Text 3"],
+        max_concurrency=5
+    )
+    
+    # Batch search
+    queries = ["first query", "second query", "third query"]
+    all_results = await async_table.batch_search_by_text(queries)
 
-# Run concurrent ingestion
-asyncio.run(download_and_ingest_multiple_books(db, books_config))
+# Run the async code
+asyncio.run(main())
 ```
 
-## Example Queries
+## Multiple Vector Columns
 
-When implementing the search functionality, follow this pattern for best results:
-1. Perform vector search to retrieve top-k candidates
-2. Apply a reranker to these candidates for more precise ranking
-3. Return the reranked results to the user
+You can create tables with multiple vector columns, each using a different model or vectorization approach:
 
-This approach ensures both efficiency and relevance.
+```python
+from astrapy.constants import VectorMetric
+from astrapy.info import TableVectorIndexOptions, VectorServiceOptions
+
+# Client-side embedding with a Spanish model
+spanish_model = SentenceTransformer("jinaai/jina-embeddings-v2-base-es")
+spanish_options = VectorColumnOptions.from_sentence_transformer(
+    model=spanish_model,
+    table_vector_index_options=TableVectorIndexOptions(
+        metric=VectorMetric.COSINE,
+    )
+)
+
+# Server-side embedding with OpenAI
+openai_options = VectorColumnOptions.from_vectorize(
+    column_name="openai_embeddings",
+    dimension=1536,
+    vector_service_options=VectorServiceOptions(
+        provider='openai',
+        model_name='text-embedding-3-small',
+        authentication={
+            "providerKey": "OPENAI_API_KEY",
+        },
+    ),
+    table_vector_index_options=TableVectorIndexOptions(
+        metric=VectorMetric.COSINE,
+    )
+)
+
+# Create multi-vector table
+table = AstraMultiVectorTable(
+    db=db,
+    table_name="multilingual_vectors",
+    vector_column_options=[spanish_options, openai_options]
+)
+```
+
+## Gutenberg Example
+
+The repository includes a complete example for ingesting and searching books from Project Gutenberg using multiple vector models. This example demonstrates:
+
+1. Setting up multiple embedding models:
+   - Language-specific models (English, Spanish)
+   - OpenAI embeddings via Vectorize
+
+2. Processing books in parallel with async operations:
+   - Concurrent book downloads
+   - Batch processing with configurable concurrency
+
+3. Performing searches across different vector columns:
+   - Language-specific searches
+   - Parallel batch searching
+
+To run the example:
+
+```python
+# See examples/gutenberg_example.py
+import asyncio
+import os
+from dotenv import load_dotenv
+from astra_multivector import VectorColumnOptions, AsyncAstraMultiVectorTable
+from astra_multivector.ingest import download_and_ingest_multiple_books
+
+# Load environment variables
+load_dotenv()
+
+# Run the example
+asyncio.run(main())
+```
+
+## API Reference
+
+### VectorColumnOptions
+
+Configures vector columns with embedding options:
+
+- `from_sentence_transformer()`: For client-side embeddings with sentence-transformers
+- `from_vectorize()`: For server-side embeddings with Astra's Vectorize
+
+### AstraMultiVectorTable
+
+Synchronous table operations:
+
+- `insert_chunk()`: Insert a single text chunk with embeddings
+- `bulk_insert_chunks()`: Insert multiple chunks in batches
+- `search_by_text()`: Search for similar text in a vector column
+- `batch_search_by_text()`: Perform multiple searches
+
+### AsyncAstraMultiVectorTable
+
+Asynchronous table operations:
+
+- `insert_chunk()`: Insert a single text chunk asynchronously
+- `bulk_insert_chunks()`: Insert multiple chunks with concurrency control
+- `search_by_text()`: Perform async search for similar text
+- `batch_search_by_text()`: Execute multiple searches in parallel
+- `parallel_process_chunks()`: Process items in parallel with custom function
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Apache License 2.0
