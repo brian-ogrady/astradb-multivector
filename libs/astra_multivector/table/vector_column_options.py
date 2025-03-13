@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 from astrapy.info import (
@@ -9,6 +10,9 @@ from sentence_transformers import SentenceTransformer
 
 
 class VectorColumnOptions(BaseModel):
+    model_config = {
+        "arbitrary_types_allowed": True
+    }
     column_name: str
     dimension: int
     model: Optional[SentenceTransformer] = None
@@ -39,7 +43,8 @@ class VectorColumnOptions(BaseModel):
             ```
         """
         if column_name is None:
-            column_name = model.model_name_or_path.replace("/", "_").replace("-", "_")
+            result = re.sub(r'[^\w\d]', '_', model.model_card_data.base_model, flags=re.UNICODE)
+            column_name = result
         
         return cls(
             column_name=column_name,

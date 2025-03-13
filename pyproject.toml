@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "astrapy==2.0.0rc0",
     "langchain>=0.3.19",
+    "langchain-nvidia-ai-endpoints>=0.3.9",
     "pydantic>=2.10.6",
     "python-dotenv>=1.0.1",
     "sentence-transformers>=3.4.1",
