@@ -114,6 +114,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "astrapy" },
     { name = "langchain" },
+    { name = "langchain-nvidia-ai-endpoints" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "sentence-transformers" },
@@ -125,6 +126,7 @@ dependencies = [
 requires-dist = [
     { name = "astrapy", specifier = "==2.0.0rc0" },
     { name = "langchain", specifier = ">=0.3.19" },
+    { name = "langchain-nvidia-ai-endpoints", specifier = ">=0.3.9" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "sentence-transformers", specifier = ">=3.4.1" },
@@ -533,6 +535,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/4f/6b/7c3f5fa60639b885d8dbc932c37f0b0584ac5151ac6bdcd00b67b591e5e9/langchain_core-0.3.40.tar.gz", hash = "sha256:893a238b38491967c804662c1ec7c3e6ebaf223d1125331249c3cf3862ff2746", size = 528341 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/01/b52e43f63261b5aae016cbe170bb5d8e8899770530075d11c1e45a07b97b/langchain_core-0.3.40-py3-none-any.whl", hash = "sha256:9f31358741f10a13db8531e8288b8a5ae91904018c5c2e6f739d6645a98fca03", size = 414346 },
+]
+
+[[package]]
+name = "langchain-nvidia-ai-endpoints"
+version = "0.3.9"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5a/db/b3511bd1dc3f209ddc8398fb80c64b70a189905ba4b75cb9839b6e7abe5d/langchain_nvidia_ai_endpoints-0.3.9.tar.gz", hash = "sha256:2533942866aeb6cc061215fb77975b16be8d81a5c5942ca24e6561e730079fa4", size = 37125 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/a0/1796982537830d0cd65d7e56982372ae3a55e3495dbab6792e61b07d6a56/langchain_nvidia_ai_endpoints-0.3.9-py3-none-any.whl", hash = "sha256:c9328d0080200f2df728466ad92df121014996bbb0c1d8518231dbb64b66d4f2", size = 41301 },
 ]
 
 [[package]]
