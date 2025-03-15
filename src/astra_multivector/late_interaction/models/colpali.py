@@ -5,7 +5,7 @@ import torch
 from PIL.Image import Image
 from colpali_engine.models import ColPali, ColPaliProcessor, ColQwen2, ColQwen2Processor
 
-from .late_interaction_model import LateInteractionModel
+from astra_multivector.late_interaction import LateInteractionModel
 
 
 def _get_module_device(module):

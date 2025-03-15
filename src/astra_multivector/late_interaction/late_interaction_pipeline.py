@@ -13,11 +13,15 @@ from astrapy.info import (
     TableVectorIndexOptions
 )
 
-from astra_multivector.table import AsyncAstraMultiVectorTable
-from astra_multivector.table import VectorColumnOptions
+from astra_multivector import AsyncAstraMultiVectorTable
+from astra_multivector import VectorColumnOptions
 
-from .late_interaction_model import LateInteractionModel
-from .pooling_utils import pool_query_embeddings, pool_doc_embeddings, expand_parameter
+from .models.base import LateInteractionModel
+from .utils import (
+    pool_query_embeddings,
+    pool_doc_embeddings,
+    expand_parameter,
+)
 
 
 class LateInteractionPipeline:

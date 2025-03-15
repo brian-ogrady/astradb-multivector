@@ -7,7 +7,7 @@ from colbert.indexing.collection_encoder import CollectionEncoder
 from colbert.infra import ColBERTConfig
 from PIL.Image import Image
 
-from .late_interaction_model import LateInteractionModel
+from astra_multivector.late_interaction import LateInteractionModel
 
 
 def _get_module_device(module):

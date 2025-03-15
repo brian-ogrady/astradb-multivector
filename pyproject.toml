@@ -18,22 +18,21 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Users can install this with `pip install astra-multivector[late_interaction]`
 late_interaction = [
-    "colbert-ai",
+    "colbert-ai==0.2.20",
+    "colpali-engine>=0.3.1,<0.4.0",
     "transformers>=4.38.2",
     "torch>=2.2.0",
     "scikit-learn>=1.3.0",  # for clustering in pooling
     "numpy>=1.24.0",
 ]
 
-# GPU-specific dependencies
-cuda = [
-    "torch==2.2.0+cu118",  # NVIDIA CUDA version
-]
-
-# Install everything including GPU support
-all = ["astra-multivector[late_interaction,cuda]"]
+all = ["astra-multivector[late_interaction]"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/astra_multivector"]
+
+[tool.hatch.build]
+include = [
+  "src/astra_multivector/**/*.py",
+]

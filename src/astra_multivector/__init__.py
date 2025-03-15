@@ -16,28 +16,9 @@ __all__ = [
 
 __version__ = "0.1.0"
 
+# Check if optional dependencies are available, but don't import them
 try:
-    import torch 
-    
-    from .late_interaction import (
-        ColBERTModel,
-        ColPaliModel,
-        LateInteractionPipeline,
-        expand_parameter,
-        pool_doc_embeddings,
-        pool_query_embeddings,
-    )
-    
-    __all__.extend([
-        'ColBERTModel',
-        'ColPaliModel',
-        'LateInteractionPipeline',
-        'expand_parameter',
-        'pool_doc_embeddings',
-        'pool_query_embeddings',
-    ])
-    
+    import torch
     HAS_LATE_INTERACTION = True
-    
 except ImportError:
     HAS_LATE_INTERACTION = False

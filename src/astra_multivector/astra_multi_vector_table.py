@@ -8,7 +8,7 @@ from astrapy.info import (
     CreateTableDefinition,
 )
 
-from astra_multivector.table.vector_column_options import VectorColumnOptions
+from astra_multivector.vector_column_options import VectorColumnOptions
 
 
 class AstraMultiVectorTable:
