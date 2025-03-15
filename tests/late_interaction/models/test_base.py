@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from unittest.mock import patch, MagicMock
 
-from src.astra_multivector.late_interaction.models.base import LateInteractionModel
+from astra_multivector.late_interaction import LateInteractionModel
 
 
 # Create a concrete subclass for testing the abstract base class

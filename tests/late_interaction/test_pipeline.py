@@ -11,7 +11,7 @@ import torch
 import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from src.astra_multivector.late_interaction.late_interaction_pipeline import LateInteractionPipeline
+from astra_multivector.late_interaction import LateInteractionPipeline
 
 
 class MockLateInteractionModel:
@@ -137,8 +137,8 @@ class TestLateInteractionPipeline(unittest.TestCase):
         """Async setup for tests that need initialization."""
         await self.pipeline.initialize()
     
-    @patch('src.astra_multivector.late_interaction.late_interaction_pipeline.CreateTableDefinition')
-    @patch('src.astra_multivector.late_interaction.late_interaction_pipeline.AsyncAstraMultiVectorTable')
+    @patch('astra_multivector.late_interaction.late_interaction_pipeline.CreateTableDefinition')
+    @patch('astra_multivector.late_interaction.late_interaction_pipeline.AsyncAstraMultiVectorTable')
     async def test_initialize(self, mock_multi_vector_table, mock_create_table_def):
         """Test pipeline initialization."""
         # Set up mocks

@@ -8,7 +8,8 @@ import torch
 import numpy as np
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from src.astra_multivector.late_interaction.models.colbert import ColBERTModel, _get_module_device
+from astra_multivector.late_interaction import ColBERTModel
+from astra_multivector.late_interaction.models.colbert import _get_module_device
 
 
 # Mock the ColBERT dependencies
@@ -44,9 +45,9 @@ class MockCollectionEncoder:
         self.checkpoint = checkpoint
 
 
-@patch('src.astra_multivector.late_interaction.models.colbert.Checkpoint', MockCheckpoint)
-@patch('src.astra_multivector.late_interaction.models.colbert.ColBERTConfig', MockColBERTConfig)
-@patch('src.astra_multivector.late_interaction.models.colbert.CollectionEncoder', MockCollectionEncoder)
+@patch('astra_multivector.late_interaction.models.colbert.Checkpoint', MockCheckpoint)
+@patch('astra_multivector.late_interaction.models.colbert.ColBERTConfig', MockColBERTConfig)
+@patch('astra_multivector.late_interaction.models.colbert.CollectionEncoder', MockCollectionEncoder)
 class TestColBERTModel(unittest.TestCase):
     """Tests for the ColBERTModel class."""
     
@@ -71,7 +72,7 @@ class TestColBERTModel(unittest.TestCase):
         self.assertIsInstance(self.model.checkpoint, MockCheckpoint)
         self.assertIsInstance(self.model.encoder, MockCollectionEncoder)
     
-    @patch('src.astra_multivector.late_interaction.models.colbert.asyncio.to_thread')
+    @patch('astra_multivector.late_interaction.models.colbert.asyncio.to_thread')
     async def test_encode_query(self, mock_to_thread):
         """Test query encoding."""
         # Set up the mock to return a sample tensor
@@ -102,7 +103,7 @@ class TestColBERTModel(unittest.TestCase):
         # Check that the result is correct
         torch.testing.assert_close(result, expected_output)
     
-    @patch('src.astra_multivector.late_interaction.models.colbert.asyncio.to_thread')
+    @patch('astra_multivector.late_interaction.models.colbert.asyncio.to_thread')
     async def test_encode_doc(self, mock_to_thread):
         """Test document encoding."""
         # Set up the mock to return a sample list of tensors

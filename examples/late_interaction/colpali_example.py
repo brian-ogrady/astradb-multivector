@@ -26,7 +26,7 @@ from PIL import Image
 
 from astrapy import DataAPIClient
 
-from late_interaction import LateInteractionPipeline, ColPaliModel
+from astra_multivector.late_interaction import LateInteractionPipeline, ColPaliModel
 
 
 # Create a directory for sample images

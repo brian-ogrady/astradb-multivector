@@ -7,7 +7,7 @@ import unittest
 import torch
 import numpy as np
 
-from src.astra_multivector.late_interaction.utils import (
+from astra_multivector.late_interaction import (
     expand_parameter,
     pool_query_embeddings,
     pool_doc_embeddings

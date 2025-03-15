@@ -22,7 +22,7 @@ from typing import Dict, Any, List
 
 from astrapy import DataAPIClient
 
-from late_interaction import LateInteractionPipeline, ColBERTModel
+from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
 
 
 # Sample documents for indexing
