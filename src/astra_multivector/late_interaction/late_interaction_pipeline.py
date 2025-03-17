@@ -2,6 +2,7 @@ import asyncio
 import uuid
 import json
 from typing import List, Dict, Any, Optional, Union, Tuple
+from functools import lru_cache
 
 import numpy as np
 import torch
@@ -42,6 +43,7 @@ class LateInteractionPipeline:
         query_pool_distance: float = 0.03,
         sim_metric: str = VectorMetric.COSINE,
         default_concurrency_limit: int = 10,
+        embedding_cache_size: int = 1000,
     ):
         """
         Initialize the LateInteractionPipeline.
@@ -54,6 +56,7 @@ class LateInteractionPipeline:
             query_pool_distance: Maximum cosine distance for pooling query embeddings (0.0 to disable)
             sim_metric: Similarity metric for vector search ("cosine" or "dot_product")
             default_concurrency_limit: Default concurrency limit for async operations
+            embedding_cache_size: Size of the LRU cache for document embeddings
         """
         self.db = db
         self.model = model
@@ -62,6 +65,7 @@ class LateInteractionPipeline:
         self.query_pool_distance = query_pool_distance
         self.sim_metric = sim_metric
         self.default_concurrency_limit = default_concurrency_limit
+        self.embedding_cache_size = embedding_cache_size
         
         self.doc_table_name = f"{base_table_name}_docs"
         self.token_table_name = f"{base_table_name}_tokens"
@@ -80,9 +84,7 @@ class LateInteractionPipeline:
         async with self._init_lock:
             if not self._initialized:
                 self._doc_table = await self._create_doc_table()
-                
                 self._token_table = await self._create_token_table()
-                
                 self._initialized = True
     
     async def _create_doc_table(self) -> AsyncTable:
@@ -108,18 +110,14 @@ class LateInteractionPipeline:
         """
         Create the token table for storing token-level embeddings.
         """
-        # Create vector column options with table-specific settings
         index_options = TableVectorIndexOptions(metric=self.sim_metric)
         
-        # Since we're using custom models, we'll create a placeholder options
-        # We won't be using the model from VectorColumnOptions, just the dimension
         token_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="token_embedding",
             dimension=self.model.dim,
             table_vector_index_options=index_options
         )
         
-        # Create the token table using AsyncAstraMultiVectorTable
         token_table = AsyncAstraMultiVectorTable(
             db=self.db,
             table_name=self.token_table_name,
@@ -127,23 +125,18 @@ class LateInteractionPipeline:
             default_concurrency_limit=self.default_concurrency_limit,
         )
         
-        # Make sure the table is initialized
-        await token_table._initialize()
-        
         return token_table
     
     async def index_document(
         self, 
         content: Union[str, Image],
-        metadata: Optional[Dict[str, Any]] = None,
         doc_id: Optional[uuid.UUID] = None,
     ) -> uuid.UUID:
         """
-        Index a document by storing its content, metadata, and token embeddings.
+        Index a document by storing its content and token embeddings.
         
         Args:
             content: Document content (text or image)
-            metadata: Optional metadata for the document (will be stored as JSON)
             doc_id: Optional document ID (generated if not provided)
             
         Returns:
@@ -152,31 +145,23 @@ class LateInteractionPipeline:
         if not self._initialized:
             await self.initialize()
         
-        # Generate document ID if not provided
         if doc_id is None:
             doc_id = uuid.uuid4()
             
-        # Convert metadata to JSON string if provided
-        metadata_json = None
-        if metadata is not None:
-            metadata_json = json.dumps(metadata)
         
-        # Insert document into doc table
         await self._doc_table.insert_one({
             "doc_id": doc_id,
             "content": content if isinstance(content, str) else "image_document",
-            "metadata": metadata_json
         })
         
-        # Encode document content to token embeddings
         doc_embeddings = await self.model.encode_doc([content])
         
-        # Apply pooling if enabled
         if self.doc_pool_factor and self.doc_pool_factor > 1:
             doc_embeddings = pool_doc_embeddings(doc_embeddings, self.doc_pool_factor)
         
-        # Insert token embeddings into token table
         await self._index_token_embeddings(doc_id, doc_embeddings[0])
+        
+        self._cached_doc_embeddings.cache_clear()
         
         return doc_id
     
@@ -195,10 +180,8 @@ class LateInteractionPipeline:
         Returns:
             List of token IDs
         """
-        # Convert embeddings to list of numpy arrays for storage
         embeddings_np = self.model._embeddings_to_numpy(embeddings)
         
-        # Process each token embedding
         tasks = []
         token_ids = []
         
@@ -206,14 +189,12 @@ class LateInteractionPipeline:
             token_id = uuid.uuid4()
             token_ids.append(token_id)
             
-            # Prepare insertion
             insertion = {
                 "chunk_id": token_id,
-                "content": f"{doc_id}:{token_idx}",  # Store doc_id:token_idx as content
+                "content": f"{doc_id}:{token_idx}",
                 "token_embedding": token_embedding.tolist()
             }
             
-            # Create task for insertion
             task = self._token_table.table.insert_one(insertion)
             tasks.append(task)
         
@@ -253,9 +234,9 @@ class LateInteractionPipeline:
         if doc_ids is None:
             doc_ids = [uuid.uuid4() for _ in range(len(documents))]
             
-        # Use empty metadata if not provided
+        # Use empty dictionaries instead of None for metadata
         if metadata_list is None:
-            metadata_list = [None] * len(documents)
+            metadata_list = [{} for _ in range(len(documents))]
             
         # Process documents in batches
         all_doc_ids = []
@@ -314,7 +295,7 @@ class LateInteractionPipeline:
         n_ann_tokens: Optional[int] = None,
         n_maxsim_candidates: Optional[int] = None,
         filter_condition: Optional[dict] = None,
-    ) -> List[Tuple[uuid.UUID, float, Optional[Dict[str, Any]]]]:
+    ) -> List[Tuple[uuid.UUID, float, str]]:
         """
         Perform a late interaction search.
         
@@ -330,7 +311,7 @@ class LateInteractionPipeline:
             filter_condition: Optional filter condition for the document search
             
         Returns:
-            List of tuples with (doc_id, score, metadata) for top k documents
+            List of tuples with (doc_id, score, content) for top k documents
         """
         if not self._initialized:
             await self.initialize()
@@ -365,7 +346,7 @@ class LateInteractionPipeline:
         n_ann_tokens: int,
         n_maxsim_candidates: int,
         filter_condition: Optional[dict] = None,
-    ) -> List[Tuple[uuid.UUID, float, Optional[Dict[str, Any]]]]:
+    ) -> List[Tuple[uuid.UUID, float, str]]:
         """
         Perform a late interaction search with pre-computed query embeddings.
         
@@ -378,26 +359,24 @@ class LateInteractionPipeline:
             filter_condition: Optional filter condition for the document search
             
         Returns:
-            List of tuples with (doc_id, score, metadata) for top k documents
+            List of tuples with (doc_id, score, content) for top k documents
         """
-        # Step 1: ANN search for each query token
-        doc_token_scores = {}
-        
-        # Process each query token embedding
-        token_search_tasks = []
-        for token_idx, token_embedding in enumerate(Q_np):
-            # Create task for ANN search
-            task = self._token_table.search_by_text(
+        # Step 1: Run all ANN searches in parallel
+        token_search_tasks = [
+            self._token_table.search_by_text(
                 query_text=token_embedding.tolist(),
                 vector_column="token_embedding",
                 limit=n_ann_tokens
             )
-            token_search_tasks.append((token_idx, task))
-            
-        # Collect ANN search results
-        for token_idx, task in token_search_tasks:
-            token_results = await task
-            
+            for token_embedding in Q_np
+        ]
+        
+        # Execute all searches concurrently
+        token_results_list = await asyncio.gather(*token_search_tasks)
+        
+        # Step 2: Process results
+        doc_token_scores = {}
+        for token_idx, token_results in enumerate(token_results_list):
             # Process each token result
             for result in token_results:
                 # Extract doc_id from content field (format: "doc_id:token_idx")
@@ -409,12 +388,12 @@ class LateInteractionPipeline:
                 similarity = result.get("$similarity", 0)  # ANN similarity score
                 doc_token_scores[key] = max(doc_token_scores.get(key, -1), similarity)
         
-        # Step 2: Aggregate scores per document
+        # Step 3: Aggregate scores per document
         doc_scores = {}
         for (doc_id, _), similarity in doc_token_scores.items():
             doc_scores[doc_id] = doc_scores.get(doc_id, 0) + similarity
             
-        # Step 3: Select top candidates for full MaxSim scoring
+        # Step 4: Select top candidates for full MaxSim scoring
         candidates = sorted(
             doc_scores.keys(), 
             key=lambda d: doc_scores[d], 
@@ -424,10 +403,12 @@ class LateInteractionPipeline:
         if not candidates:
             return []  # No results found
             
-        # Step 4: Load document token embeddings for candidates
-        doc_embeddings = await self._load_doc_token_embeddings(candidates)
+        # Step 5: Use cached document token embeddings for candidates
+        # Convert list to tuple for cache key
+        candidates_tuple = tuple(candidates)
+        doc_embeddings = await self._cached_doc_embeddings(candidates_tuple)
         
-        # Step 5: Calculate full MaxSim scores
+        # Step 6: Calculate full MaxSim scores
         if doc_embeddings:
             scores = self.model.score(Q, doc_embeddings)
             
@@ -443,65 +424,94 @@ class LateInteractionPipeline:
             )
             docs = await cursor.to_list()
             
-            # Create a mapping of doc_id to metadata
-            metadata_map = {}
-            for doc in docs:
-                doc_id = uuid.UUID(doc["doc_id"])
-                metadata_json = doc.get("metadata")
-                metadata = json.loads(metadata_json) if metadata_json else None
-                metadata_map[doc_id] = metadata
+            # Create a mapping of doc_ids to docs
+            doc_map = {uuid.UUID(doc["doc_id"]): doc for doc in docs}
                 
-            # Include metadata in results
-            results = [(doc_id, score, metadata_map.get(doc_id)) for doc_id, score in top_k]
+            # Include content in results
+            results = [(doc_id, score, doc_map.get(doc_id, {}).get("content", "")) for doc_id, score in top_k]
             return results
             
         return []
     
-    async def _load_doc_token_embeddings(
+    @lru_cache(maxsize=1000)  # Decorator applied directly to the method
+    async def _cached_doc_embeddings(
         self, 
-        doc_ids: List[uuid.UUID]
+        doc_ids: Tuple[uuid.UUID]
     ) -> List[torch.Tensor]:
         """
-        Load token embeddings for the specified documents.
+        Cached version of document token embeddings loading.
         
         Args:
-            doc_ids: List of document IDs
+            doc_ids: Tuple of document IDs (tuple for hashability)
             
         Returns:
             List of token embedding tensors, one per document
         """
-        doc_embeddings = []
+        # Ensure doc_ids is a tuple for hashability
+        doc_ids_tuple = tuple(doc_ids)  # Extra protection against non-hashable types
         
-        # Fetch token embeddings for each document
-        for doc_id in doc_ids:
-            # Query tokens for this document
-            cursor = await self._token_table.table.find(
-                filter={"content": {"$regex": f"^{doc_id}:"}},
-                projection={"token_embedding": 1, "content": 1}
-            )
-            tokens = await cursor.to_list()
+        # Use the parallelized implementation
+        return await self._load_doc_token_embeddings(doc_ids_tuple)
+    
+    async def _load_doc_token_embeddings(
+        self, 
+        doc_ids: Tuple[uuid.UUID]
+    ) -> List[torch.Tensor]:
+        """
+        Load token embeddings for the specified documents in parallel.
+        
+        Args:
+            doc_ids: Tuple of document IDs
             
-            if not tokens:
-                continue
-                
-            # Extract token index and embeddings
-            token_data = []
-            for token in tokens:
-                _, token_idx_str = token["content"].split(":")
-                token_idx = int(token_idx_str)
-                embedding = token["token_embedding"]
-                token_data.append((token_idx, embedding))
-                
-            # Sort by token index
-            token_data.sort(key=lambda x: x[0])
+        Returns:
+            List of token embedding tensors, one per document
+        """
+        # Convert tuple to list for processing
+        doc_ids_list = list(doc_ids)
+        
+        # Create tasks to fetch embeddings for each document in parallel
+        tasks = [
+            self._fetch_token_embeddings(doc_id) 
+            for doc_id in doc_ids_list
+        ]
+        
+        # Execute all tasks concurrently
+        return await asyncio.gather(*tasks)
+    
+    async def _fetch_token_embeddings(
+        self, 
+        doc_id: uuid.UUID
+    ) -> torch.Tensor:
+        """
+        Fetch token embeddings for a single document.
+        
+        Args:
+            doc_id: Document ID
             
-            # Convert to tensor
-            embeddings = [t[1] for t in token_data]
-            embeddings_tensor = self.model._numpy_to_embeddings(np.array(embeddings))
+        Returns:
+            Token embeddings tensor for the document
+        """
+        # Query tokens for this document
+        cursor = await self._token_table.table.find(
+            filter={"content": {"$regex": f"^{doc_id}:"}},
+            projection={"token_embedding": 1, "content": 1}
+        )
+        tokens = await cursor.to_list()
+        
+        if not tokens:
+            # Return empty tensor if no tokens found
+            return torch.zeros((0, self.model.dim), device=self.model.to_device(torch.tensor([])).device)
             
-            doc_embeddings.append(embeddings_tensor)
+        # Extract token index and embeddings, then sort by index
+        token_data = sorted(
+            [(int(token["content"].split(":")[1]), token["token_embedding"]) 
+             for token in tokens],
+            key=lambda x: x[0]
+        )
             
-        return doc_embeddings
+        # Convert to tensor
+        embeddings = [t[1] for t in token_data]
+        return self.model._numpy_to_embeddings(np.array(embeddings))
         
     async def get_document(self, doc_id: uuid.UUID) -> Optional[Dict[str, Any]]:
         """
@@ -528,19 +538,10 @@ class LateInteractionPipeline:
             
         doc = docs[0]
         
-        # Parse metadata
-        metadata = None
-        if doc.get("metadata"):
-            try:
-                metadata = json.loads(doc["metadata"])
-            except json.JSONDecodeError:
-                metadata = doc["metadata"]
-                
         # Prepare result
         result = {
             "doc_id": uuid.UUID(doc["doc_id"]),
-            "content": doc["content"],
-            "metadata": metadata
+            "content": doc["content"]
         }
         
         return result
@@ -581,5 +582,8 @@ class LateInteractionPipeline:
                 
             # Execute all deletes concurrently
             await asyncio.gather(*delete_tasks)
+            
+        # Clear the cache since we've modified documents
+        self._cached_doc_embeddings.cache_clear()
             
         return doc_result.deleted_count > 0

@@ -167,7 +167,6 @@ class TestLateInteractionPipeline(unittest.TestCase):
         """Test document indexing."""
         # Create a test document
         content = "Test document"
-        metadata = {"key": "value"}
         doc_id = uuid.uuid4()
         
         # Initialize the pipeline
@@ -178,7 +177,7 @@ class TestLateInteractionPipeline(unittest.TestCase):
         self.pipeline._index_token_embeddings = AsyncMock(return_value=[uuid.uuid4()])
         
         # Call the method
-        result_id = await self.pipeline.index_document(content, metadata, doc_id)
+        result_id = await self.pipeline.index_document(content, doc_id)
         
         # Verify the results
         self.assertEqual(result_id, doc_id)
@@ -189,7 +188,6 @@ class TestLateInteractionPipeline(unittest.TestCase):
         """Test bulk document indexing."""
         # Create test documents
         contents = ["Doc 1", "Doc 2", "Doc 3"]
-        metadata_list = [{"key": "value1"}, {"key": "value2"}, {"key": "value3"}]
         doc_ids = [uuid.uuid4() for _ in range(3)]
         
         # Initialize the pipeline
@@ -201,7 +199,6 @@ class TestLateInteractionPipeline(unittest.TestCase):
         # Call the method
         result_ids = await self.pipeline.bulk_index_documents(
             documents=contents,
-            metadata_list=metadata_list,
             doc_ids=doc_ids,
             max_concurrency=2,
             batch_size=2
@@ -227,8 +224,8 @@ class TestLateInteractionPipeline(unittest.TestCase):
         # Mock methods
         self.pipeline._search_with_embeddings = AsyncMock(
             return_value=[
-                (uuid.uuid4(), 0.95, {"title": "Doc 1"}),
-                (uuid.uuid4(), 0.85, {"title": "Doc 2"})
+                (uuid.uuid4(), 0.95, "Document content 1"),
+                (uuid.uuid4(), 0.85, "Document content 2")
             ]
         )
         
@@ -250,8 +247,7 @@ class TestLateInteractionPipeline(unittest.TestCase):
         # Mock the find method
         mock_doc = {
             "doc_id": str(doc_id),
-            "content": "Test document",
-            "metadata": json.dumps({"key": "value"})
+            "content": "Test document"
         }
         self.pipeline._doc_table.find.return_value = MockAsyncCursor([mock_doc])
         
@@ -262,7 +258,6 @@ class TestLateInteractionPipeline(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result["doc_id"], doc_id)
         self.assertEqual(result["content"], "Test document")
-        self.assertEqual(result["metadata"], {"key": "value"})
     
     async def test_delete_document(self):
         """Test document deletion."""

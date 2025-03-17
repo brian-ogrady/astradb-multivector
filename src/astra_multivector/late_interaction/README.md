@@ -68,8 +68,7 @@ async def main():
     
     # Index documents
     doc_id = await pipeline.index_document(
-        content="This is a sample document for testing late interaction retrieval.",
-        metadata={"source": "example", "category": "test"}
+        content="This is a sample document for testing late interaction retrieval."
     )
     
     # Search for similar documents
@@ -79,10 +78,9 @@ async def main():
     )
     
     # Print results
-    for doc_id, score, metadata in results:
+    for doc_id, score, content in results:
         print(f"Document: {doc_id}, Score: {score:.4f}")
-        if metadata:
-            print(f"Metadata: {metadata}")
+        print(f"Content: {content}")
 
 if __name__ == "__main__":
     asyncio.run(main())

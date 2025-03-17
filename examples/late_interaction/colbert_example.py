@@ -104,8 +104,7 @@ async def index_sample_documents(pipeline: LateInteractionPipeline) -> List[uuid
     # Index documents individually
     for i, doc in enumerate(SAMPLE_DOCUMENTS[:2]):
         doc_id = await pipeline.index_document(
-            content=doc["content"],
-            metadata=doc["metadata"]
+            content=doc["content"]
         )
         doc_ids.append(doc_id)
         print(f"Indexed document {i+1}/2 with ID: {doc_id}")
@@ -113,13 +112,12 @@ async def index_sample_documents(pipeline: LateInteractionPipeline) -> List[uuid
     # Index remaining documents in bulk
     remaining_docs = SAMPLE_DOCUMENTS[2:]
     bulk_contents = [doc["content"] for doc in remaining_docs]
-    bulk_metadata = [doc["metadata"] for doc in remaining_docs]
     
     bulk_ids = await pipeline.bulk_index_documents(
         documents=bulk_contents,
-        metadata_list=bulk_metadata,
         max_concurrency=3
     )
+    
     doc_ids.extend(bulk_ids)
     print(f"Bulk indexed {len(bulk_ids)} additional documents")
     
@@ -135,28 +133,23 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     results = await pipeline.search(query=query, k=3)
     
     print(f"\nSearch results for '{query}':")
-    for i, (doc_id, score, metadata) in enumerate(results):
-        # Fetch document to get content
-        doc = await pipeline.get_document(doc_id)
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Content: {doc['content']}")
-        print(f"   Metadata: {json.dumps(metadata)}")
+        print(f"   Content: {content}")
+        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
     
-    # Search with filtering by metadata
+    # Search with custom parameters
     query = "programming"
-    filter_condition = {"metadata": {"$contains": "\"category\":\"education\""}}
     results = await pipeline.search(
         query=query, 
-        k=2,
-        filter_condition=filter_condition
+        k=2
     )
     
-    print(f"\nFiltered search results for '{query}' (category=education):")
-    for i, (doc_id, score, metadata) in enumerate(results):
-        doc = await pipeline.get_document(doc_id)
+    print(f"\nSearch results for '{query}':")
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Content: {doc['content']}")
-        print(f"   Metadata: {json.dumps(metadata)}")
+        print(f"   Content: {content}")
+        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
     
     # Advanced search with customized parameters
     query = "machine learning algorithms"
@@ -170,11 +163,10 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     )
     
     print(f"\nAdvanced search results for '{query}':")
-    for i, (doc_id, score, metadata) in enumerate(results):
-        doc = await pipeline.get_document(doc_id)
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Content: {doc['content']}")
-        print(f"   Metadata: {json.dumps(metadata)}")
+        print(f"   Content: {content}")
+        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
 
 
 async def main():

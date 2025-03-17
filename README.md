@@ -174,6 +174,44 @@ load_dotenv()
 asyncio.run(main())
 ```
 
+## Late Interaction
+
+The library includes an optional sub-module for late interaction retrieval, which defers matching between query and document tokens until retrieval time, providing higher accuracy than traditional dense retrieval methods.
+
+```python
+from astrapy.database import AsyncDatabase
+from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
+
+# Initialize database and model
+db = AsyncDatabase(token="your-token", api_endpoint="your-api-endpoint")
+model = ColBERTModel(model_name="answerdotai/answerai-colbert-small-v1")
+
+# Create pipeline
+pipeline = LateInteractionPipeline(
+    db=db,
+    model=model,
+    base_table_name="my_colbert_index",
+)
+
+# Index documents and search
+await pipeline.initialize()
+doc_id = await pipeline.index_document(
+    content="This is a sample document for testing late interaction retrieval."
+)
+results = await pipeline.search(query="sample retrieval", k=5)
+
+# Process search results
+for doc_id, score, content in results:
+    print(f"Document: {doc_id}, Score: {score:.4f}")
+    print(f"Content: {content}")
+```
+
+Supported models include:
+- **ColBERT**: Text-to-text token-level matching for high-precision search
+- **ColPali**: Multimodal token-level matching supporting image-to-text and text-to-image search
+
+For more details, see the [Late Interaction README](src/astra_multivector/late_interaction/README.md).
+
 ## API Reference
 
 ### VectorColumnOptions

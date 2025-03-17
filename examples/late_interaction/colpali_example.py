@@ -126,22 +126,20 @@ async def index_sample_images(
     # Index first image individually
     first_img_path, first_img = image_files[0]
     doc_id = await pipeline.index_document(
-        content=first_img,
-        metadata=SAMPLE_IMAGE_METADATA[0]
+        content=first_img
     )
     doc_ids.append(doc_id)
     print(f"Indexed image 1/5 with ID: {doc_id}")
     
     # Index remaining images in bulk
     remaining_images = [img for _, img in image_files[1:]]
-    remaining_metadata = SAMPLE_IMAGE_METADATA[1:]
     
     bulk_ids = await pipeline.bulk_index_documents(
         documents=remaining_images,
-        metadata_list=remaining_metadata,
         max_concurrency=3,
         batch_size=2
     )
+        
     doc_ids.extend(bulk_ids)
     print(f"Bulk indexed {len(bulk_ids)} additional images")
     
@@ -157,25 +155,23 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     results = await pipeline.search(query=query, k=3)
     
     print(f"\nSearch results for '{query}':")
-    for i, (doc_id, score, metadata) in enumerate(results):
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Image: {metadata.get('title', 'Unknown')}")
-        print(f"   Tags: {', '.join(metadata.get('tags', []))}")
+        print(f"   Content: {content}")
+        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
     
-    # Search with filtering
+    # Search with custom parameters
     query = "urban setting"
-    filter_condition = {"metadata": {"$contains": "\"category\":\"cityscape\""}}
     results = await pipeline.search(
         query=query, 
-        k=2,
-        filter_condition=filter_condition
+        k=2
     )
     
-    print(f"\nFiltered search results for '{query}' (category=cityscape):")
-    for i, (doc_id, score, metadata) in enumerate(results):
+    print(f"\nSearch results for '{query}':")
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Image: {metadata.get('title', 'Unknown')}")
-        print(f"   Tags: {', '.join(metadata.get('tags', []))}")
+        print(f"   Content: {content}")
+        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
     
     # Detailed search with customized parameters
     query = "beach with sunset"
@@ -188,11 +184,11 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     )
     
     print(f"\nDetailed search results for '{query}':")
-    for i, (doc_id, score, metadata) in enumerate(results):
+    for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Image: {metadata.get('title', 'Unknown')}")
-        print(f"   Category: {metadata.get('category', 'Unknown')}")
-        print(f"   Tags: {', '.join(metadata.get('tags', []))}")
+        print(f"   Content: {content}")
+        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
+        print(f"   Category: {SAMPLE_IMAGE_METADATA[i]['category'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
 
 
 async def main():
