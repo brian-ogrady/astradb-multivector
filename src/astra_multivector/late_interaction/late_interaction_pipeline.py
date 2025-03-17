@@ -1,12 +1,13 @@
 import asyncio
 import uuid
 import json
-from typing import List, Dict, Any, Optional, Union, Tuple, Callable
+from typing import List, Dict, Any, Optional, Union, Tuple
 
 import numpy as np
 import torch
 from PIL.Image import Image
 from astrapy import AsyncDatabase, AsyncTable
+from astrapy.constants import VectorMetric
 from astrapy.info import (
     ColumnType,
     CreateTableDefinition,
@@ -39,7 +40,7 @@ class LateInteractionPipeline:
         base_table_name: str,
         doc_pool_factor: int = 2,
         query_pool_distance: float = 0.03,
-        sim_metric: str = "cosine",
+        sim_metric: str = VectorMetric.COSINE,
         default_concurrency_limit: int = 10,
     ):
         """
@@ -62,11 +63,9 @@ class LateInteractionPipeline:
         self.sim_metric = sim_metric
         self.default_concurrency_limit = default_concurrency_limit
         
-        # Table names
         self.doc_table_name = f"{base_table_name}_docs"
         self.token_table_name = f"{base_table_name}_tokens"
         
-        # Initialize tables
         self._doc_table = None
         self._token_table = None
         self._initialized = False
@@ -80,10 +79,8 @@ class LateInteractionPipeline:
         """
         async with self._init_lock:
             if not self._initialized:
-                # Create document table
                 self._doc_table = await self._create_doc_table()
                 
-                # Create token table for token-level embeddings
                 self._token_table = await self._create_token_table()
                 
                 self._initialized = True
@@ -96,11 +93,9 @@ class LateInteractionPipeline:
             CreateTableDefinition.builder()
             .add_column("doc_id", ColumnType.UUID)
             .add_column("content", ColumnType.TEXT)
-            .add_column("metadata", ColumnType.TEXT)
             .add_partition_by(["doc_id"])
         )
         
-        # Create the table
         doc_table = await self.db.create_table(
             self.doc_table_name,
             definition=schema.build(),
@@ -118,7 +113,7 @@ class LateInteractionPipeline:
         
         # Since we're using custom models, we'll create a placeholder options
         # We won't be using the model from VectorColumnOptions, just the dimension
-        token_options = VectorColumnOptions(
+        token_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="token_embedding",
             dimension=self.model.dim,
             table_vector_index_options=index_options

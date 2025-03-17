@@ -1,10 +1,12 @@
 import unittest
 from unittest.mock import MagicMock, patch, call
 import uuid
+import warnings
 
 from astrapy.database import Database, Table
 from astrapy.info import CreateTableDefinition, ColumnType, TableVectorIndexOptions
 from sentence_transformers import SentenceTransformer
+from reranker import Reranker, RankedResults
 
 from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
 
@@ -173,6 +175,274 @@ class TestAstraMultiVectorTable(unittest.TestCase):
         
         # Verify the results
         self.assertEqual(results, [["result1"], ["result2"]])
+    
+    def test_multi_vector_similarity_search(self):
+        # Prepare test
+        query_text = "test query"
+        encoded_query = [0.1, 0.2, 0.3]
+        self.mock_model.encode.return_value = encoded_query
+        
+        # Set up mock results for different columns
+        mock_results1 = [
+            {"chunk_id": "id1", "content": "content1", "$similarity": 0.9},
+            {"chunk_id": "id2", "content": "content2", "$similarity": 0.8}
+        ]
+        mock_results2 = [
+            {"chunk_id": "id2", "content": "content2", "$similarity": 0.85},
+            {"chunk_id": "id3", "content": "content3", "$similarity": 0.7}
+        ]
+        
+        # Configure mock responses
+        self.mock_table.find.side_effect = [mock_results1, mock_results2]
+        
+        # Call the method with all vector columns
+        results = self.table.multi_vector_similarity_search(
+            query_text=query_text,
+            candidates_per_column=2
+        )
+        
+        # Verify find was called twice (once for each column)
+        self.assertEqual(self.mock_table.find.call_count, 2)
+        
+        # Verify correct columns were searched with correct queries
+        calls = [
+            call(filter={}, sort={"embeddings1": encoded_query.tolist()}, 
+                 limit=2, include_similarity=True),
+            call(filter={}, sort={"embeddings2": query_text}, 
+                 limit=2, include_similarity=True)
+        ]
+        self.mock_table.find.assert_has_calls(calls, any_order=True)
+        
+        # Verify results were combined correctly
+        self.assertEqual(len(results), 3)  # Three unique document IDs
+        
+        # Verify each result has source_columns metadata
+        for result in results:
+            self.assertIn("source_columns", result)
+    
+    def test_multi_vector_similarity_search_specific_columns(self):
+        # Prepare test
+        query_text = "test query"
+        encoded_query = [0.1, 0.2, 0.3]
+        self.mock_model.encode.return_value = encoded_query
+        
+        # Set up mock results
+        mock_results = [
+            {"chunk_id": "id1", "content": "content1", "$similarity": 0.9}
+        ]
+        self.mock_table.find.return_value = mock_results
+        
+        # Call the method with a specific vector column
+        results = self.table.multi_vector_similarity_search(
+            query_text=query_text,
+            vector_columns=["embeddings1"]
+        )
+        
+        # Verify find was called once (only for the specified column)
+        self.assertEqual(self.mock_table.find.call_count, 1)
+        
+        # Verify the correct column was searched
+        self.mock_table.find.assert_called_with(
+            filter={}, 
+            sort={"embeddings1": encoded_query.tolist()}, 
+            limit=10, 
+            include_similarity=True
+        )
+    
+    def test_multi_vector_similarity_search_with_precomputed(self):
+        # Prepare test
+        query_text = "test query"
+        precomputed_embeddings = {"embeddings1": [0.4, 0.5, 0.6]}
+        
+        # Set up mock results
+        mock_results = [
+            {"chunk_id": "id1", "content": "content1", "$similarity": 0.9}
+        ]
+        self.mock_table.find.return_value = mock_results
+        
+        # Call the method with precomputed embeddings
+        results = self.table.multi_vector_similarity_search(
+            query_text=query_text,
+            vector_columns=["embeddings1"],
+            precomputed_embeddings=precomputed_embeddings
+        )
+        
+        # Verify find was called with the precomputed embedding
+        self.mock_table.find.assert_called_with(
+            filter={}, 
+            sort={"embeddings1": precomputed_embeddings["embeddings1"]}, 
+            limit=10, 
+            include_similarity=True
+        )
+        
+        # Verify model.encode was not called
+        self.mock_model.encode.assert_not_called()
+    
+    def test_multi_vector_similarity_search_invalid_column(self):
+        # Test with an invalid column name
+        with self.assertRaises(ValueError):
+            self.table.multi_vector_similarity_search(
+                query_text="test query",
+                vector_columns=["non_existent_column"]
+            )
+    
+    def test_multi_vector_similarity_search_missing_precomputed(self):
+        # Test with missing precomputed embedding
+        with self.assertRaises(ValueError):
+            self.table.multi_vector_similarity_search(
+                query_text="test query",
+                vector_columns=["embeddings1"],
+                precomputed_embeddings={}  # Empty precomputed embeddings
+            )
+    
+    def test_rerank_results(self):
+        # Prepare test
+        query_text = "test query"
+        results = [
+            {"chunk_id": "id1", "content": "content1"},
+            {"chunk_id": "id2", "content": "content2"},
+            {"chunk_id": "id3", "content": "content3"}
+        ]
+        
+        # Create mock reranker
+        mock_reranker = MagicMock(spec=Reranker)
+        mock_ranked_results = MagicMock(spec=RankedResults)
+        mock_ranked_results.results = ["ranked1", "ranked2", "ranked3"]
+        mock_reranker.rank.return_value = mock_ranked_results
+        
+        # Call the method
+        reranked = self.table.rerank_results(
+            query_text=query_text,
+            results=results,
+            reranker=mock_reranker
+        )
+        
+        # Verify reranker.rank was called with the correct arguments
+        mock_reranker.rank.assert_called_once_with(
+            query=query_text,
+            docs=["content1", "content2", "content3"],
+            doc_ids=["id1", "id2", "id3"]
+        )
+        
+        # Verify the results
+        self.assertEqual(reranked, mock_ranked_results)
+    
+    def test_rerank_results_with_limit(self):
+        # Prepare test
+        query_text = "test query"
+        results = [
+            {"chunk_id": "id1", "content": "content1"},
+            {"chunk_id": "id2", "content": "content2"},
+            {"chunk_id": "id3", "content": "content3"}
+        ]
+        
+        # Create mock reranker with results
+        mock_reranker = MagicMock(spec=Reranker)
+        mock_ranked_results = MagicMock(spec=RankedResults)
+        mock_ranked_results.results = ["ranked1", "ranked2", "ranked3"]
+        mock_reranker.rank.return_value = mock_ranked_results
+        
+        # Call the method with a limit
+        reranked = self.table.rerank_results(
+            query_text=query_text,
+            results=results,
+            reranker=mock_reranker,
+            limit=2
+        )
+        
+        # Verify the results were limited
+        self.assertEqual(len(reranked.results), 2)
+        self.assertEqual(reranked.results, ["ranked1", "ranked2"])
+    
+    def test_search_and_rerank(self):
+        # Prepare test
+        query_text = "test query"
+        encoded_query = [0.1, 0.2, 0.3]
+        self.mock_model.encode.return_value = encoded_query
+        
+        # Set up mock results for search
+        mock_results = [
+            {"chunk_id": "id1", "content": "content1", "$similarity": 0.9},
+            {"chunk_id": "id2", "content": "content2", "$similarity": 0.8}
+        ]
+        self.mock_table.find.return_value = mock_results
+        
+        # Create mock reranker
+        mock_reranker = MagicMock(spec=Reranker)
+        mock_ranked_results = MagicMock(spec=RankedResults)
+        mock_reranker.rank.return_value = mock_ranked_results
+        
+        # Call the method
+        results = self.table.search_and_rerank(
+            query_text=query_text,
+            reranker=mock_reranker,
+            vector_columns=["embeddings1"],
+            candidates_per_column=5,
+            rerank_limit=3
+        )
+        
+        # Verify search was called
+        self.mock_table.find.assert_called_once()
+        
+        # Verify reranker.rank was called
+        mock_reranker.rank.assert_called_once()
+        
+        # Verify the results
+        self.assertEqual(results, mock_ranked_results)
+    
+    def test_batch_search_by_text_with_reranking(self):
+        # Prepare test
+        queries = ["query1", "query2"]
+        encoded_query = [0.1, 0.2, 0.3]
+        self.mock_model.encode.return_value = encoded_query
+        
+        # Set up mock results for search
+        mock_results = [
+            {"chunk_id": "id1", "content": "content1", "$similarity": 0.9},
+            {"chunk_id": "id2", "content": "content2", "$similarity": 0.8}
+        ]
+        self.mock_table.find.return_value = mock_results
+        
+        # Create mock reranker
+        mock_reranker = MagicMock(spec=Reranker)
+        mock_ranked_results = MagicMock(spec=RankedResults)
+        mock_reranker.rank.return_value = mock_ranked_results
+        
+        # Call the method with reranking
+        results = self.table.batch_search_by_text(
+            queries=queries,
+            vector_columns=["embeddings1"],
+            rerank=True,
+            reranker=mock_reranker,
+            rerank_limit=3
+        )
+        
+        # Verify find was called twice (once per query)
+        self.assertEqual(self.mock_table.find.call_count, 2)
+        
+        # Verify reranker.rank was called twice
+        self.assertEqual(mock_reranker.rank.call_count, 2)
+        
+        # Verify the results are a list of RankedResults
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results, [mock_ranked_results, mock_ranked_results])
+    
+    def test_batch_search_by_text_with_reranking_error(self):
+        # Test reranking without providing a reranker
+        with self.assertRaises(ValueError):
+            self.table.batch_search_by_text(
+                queries=["query1"],
+                rerank=True,
+                reranker=None
+            )
+    
+    def test_batch_search_by_text_precomputed_length_error(self):
+        # Test with incorrect number of precomputed embeddings
+        with self.assertRaises(ValueError):
+            self.table.batch_search_by_text(
+                queries=["query1", "query2"],
+                precomputed_embeddings=[{"embeddings1": [0.1, 0.2]}]  # Only one embedding for two queries
+            )
 
 
 if __name__ == "__main__":

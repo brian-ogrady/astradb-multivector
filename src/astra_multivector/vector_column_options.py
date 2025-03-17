@@ -1,12 +1,19 @@
 import re
+from enum import Enum, auto
 from typing import Optional
 
 from astrapy.info import (
     TableVectorIndexOptions,
     VectorServiceOptions,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from sentence_transformers import SentenceTransformer
+
+
+class VectorColumnType(Enum):
+    SENTENCE_TRANSFORMER = auto()
+    VECTORIZE = auto()  
+    PRECOMPUTED = auto()
 
 
 class VectorColumnOptions(BaseModel):
@@ -18,6 +25,36 @@ class VectorColumnOptions(BaseModel):
     model: Optional[SentenceTransformer] = None
     vector_service_options: Optional[VectorServiceOptions] = None
     table_vector_index_options: Optional[TableVectorIndexOptions] = None
+    _type: VectorColumnType = PrivateAttr(default=VectorColumnType.PRECOMPUTED)
+
+    def __init__(self, *, _type: VectorColumnType, **kwargs):
+        super().__init__(**kwargs)
+        self._type = _type
+
+    @property
+    def type(self) -> VectorColumnType:
+        """Read-only property to get the type"""
+        return self._type
+
+    @classmethod
+    def from_precomputed_embeddings(
+        cls,
+        column_name: str,
+        dimension: int,
+        table_vector_index_options: Optional[TableVectorIndexOptions] = None,
+    ) -> "VectorColumnOptions":
+        """Create options for pre-computed embeddings where neither
+        SentenceTransformer nor Vectorize will be used for embedding generation.
+    
+        When using these options, embeddings must be provided directly during insertion.
+        """
+        instance = cls(
+            column_name=column_name,
+            dimension=dimension,
+            table_vector_index_options=table_vector_index_options,
+            _type=VectorColumnType.PRECOMPUTED,
+        )
+        return instance
 
     @classmethod
     def from_sentence_transformer(
@@ -25,7 +62,7 @@ class VectorColumnOptions(BaseModel):
         model: SentenceTransformer, 
         column_name: Optional[str] = None,
         table_vector_index_options: Optional[TableVectorIndexOptions] = None,
-    ):
+    ) -> "VectorColumnOptions":
         """Create options for client-side embedding with SentenceTransformer
         Example:
             ```python
@@ -42,16 +79,17 @@ class VectorColumnOptions(BaseModel):
             )
             ```
         """
-        if column_name is None:
-            result = re.sub(r'[^\w\d]', '_', model.model_card_data.base_model, flags=re.UNICODE)
-            column_name = result
+        base_model_name = re.sub(r'[^\w\d]', '_', getattr(model.model_card_data, "base_model", "default_model"), flags=re.UNICODE)
+        column_name = column_name or base_model_name
         
-        return cls(
+        instance = cls(
             column_name=column_name,
             dimension=model.get_sentence_embedding_dimension(),
             model=model,
-            table_vector_index_options=table_vector_index_options
+            table_vector_index_options=table_vector_index_options,
+            _type=VectorColumnType.SENTENCE_TRANSFORMER,
         )
+        return instance
     
     @classmethod
     def from_vectorize(
@@ -60,7 +98,7 @@ class VectorColumnOptions(BaseModel):
         dimension: int,
         vector_service_options: VectorServiceOptions,
         table_vector_index_options: Optional[TableVectorIndexOptions] = None,
-    ):
+    ) -> "VectorColumnOptions":
         """Create options for Vectorize
         Example:
             ```python
@@ -82,9 +120,22 @@ class VectorColumnOptions(BaseModel):
             )
             ```
         """
-        return cls(
+        instance = cls(
             column_name=column_name,
             dimension=dimension,
             vector_service_options=vector_service_options,
-            table_vector_index_options=table_vector_index_options
+            table_vector_index_options=table_vector_index_options,
+            _type=VectorColumnType.VECTORIZE,
         )
+        return instance
+    
+    def to_dict(self) -> dict:
+        return {
+            "column_name": self.column_name,
+            "dimension": self.dimension,
+            "type": self._type.name,
+            "model": self.model.model_name if self.model else None,
+            "vector_service_options": self.vector_service_options.as_dict() if self.vector_service_options else None,
+            "table_vector_index_options": self.table_vector_index_options.as_dict() if self.table_vector_index_options else None,
+        }
+

@@ -13,6 +13,7 @@ dependencies = [
     "astrapy==2.0.0rc0",
     "pydantic>=2.10.6",
     "python-dotenv>=1.0.1",
+    "rerankers[api,transformers]>=0.8.0",
     "sentence-transformers>=3.4.1",
     "tqdm>=4.67.1",
 ]

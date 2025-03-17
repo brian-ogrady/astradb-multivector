@@ -1,5 +1,6 @@
 import uuid
-from typing import List, Dict, Any
+import warnings
+from typing import Any, Dict, List, Optional, Union
 
 from astrapy import Database, Table
 from astrapy.info import (
@@ -7,8 +8,13 @@ from astrapy.info import (
     ColumnType,
     CreateTableDefinition,
 )
+from astrapy.results import TableInsertManyResult, TableInsertOneResult
+from reranker import Reranker, RankedResults
 
-from astra_multivector.vector_column_options import VectorColumnOptions
+from astra_multivector.vector_column_options import (
+    VectorColumnOptions,
+    VectorColumnType,
+)
 
 
 class AstraMultiVectorTable:
@@ -16,7 +22,18 @@ class AstraMultiVectorTable:
     
     This class handles the creation of database tables with vector columns,
     creation of vector indexes, and the insertion of text chunks with their
-    associated embeddings (either computed client-side or with vectorize).
+    associated embeddings. It supports multiple vector columns for the same content,
+    allowing for:
+    
+    - Client-side embeddings using sentence-transformers models
+    - Server-side embeddings using Astra Vectorize
+    - Pre-computed embeddings supplied by the user
+    
+    The table supports advanced search capabilities including:
+    - Basic vector similarity search per column
+    - Multi-vector search across all columns with combined results
+    - Integration with reranking models for improved accuracy
+    - Batch operations for efficiency
     
     Example:
         ```python
@@ -40,21 +57,34 @@ class AstraMultiVectorTable:
                 provider='openai',
                 model_name='text-embedding-3-small',
                 authentication={
-                    "providerKey": "openaikey_astra_kms_alias",
+                    "providerKey": "OPENAI_API_KEY",
                 },
             )
         )
         
         # Create the table
-        vector_table = GutenbergTextVectorTable(
-            database=db,
+        vector_table = AstraMultiVectorTable(
+            db=db,
             table_name="hamlet",
-            english_options,
-            multilingual_options
+            vector_column_options=[english_options, multilingual_options]
         )
         
         # Insert text chunks
         vector_table.insert_chunk("To be or not to be, that is the question.")
+        
+        # Search across all vector columns
+        results = vector_table.multi_vector_similarity_search(
+            query_text="question about existence",
+            candidates_per_column=10
+        )
+        
+        # Add reranking for improved relevance
+        from reranker import Reranker
+        reranker = Reranker.from_pretrained("BAAI/bge-reranker-base")
+        ranked_results = vector_table.search_and_rerank(
+            query_text="question about existence",
+            reranker=reranker
+        )
         ```
     """
 
@@ -96,125 +126,319 @@ class AstraMultiVectorTable:
                 options=options.table_vector_index_options,
                 if_not_exists=True,
             )
+            if options.type == VectorColumnType.VECTORIZE:
+                table = table.alter(
+                    AlterTableAddVectorize(columns=options.vector_service_options)
+                )
 
-        vectorize_options = {
-            options.column_name: options.vector_service_options 
-            for options in self.vector_column_options if options.vector_service_options
-        }
-
-        if len(vectorize_options) > 0:
-            table = table.alter(
-                AlterTableAddVectorize(columns=vectorize_options)
-            )
-        
         return table
     
-    def insert_chunk(self, text_chunk: str) -> None:
-        """Insert a text chunk & embeddings(s) into the table"""
+    def insert_chunk(
+            self,
+            text_chunk: str,
+            precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+            **kwargs,
+        ) -> TableInsertOneResult:
+        """Insert a text chunk & embeddings(s) into the table
+    
+        Args:
+            text_chunk: The text content to insert
+            precomputed_embeddings: Dictionary mapping column names to precomputed 
+                vector embeddings for columns of type PRECOMPUTED
+            **kwargs: Additional arguments passed directly to the DataAPI's insert_one method
+                
+        Note:
+            For complete details on all available parameters, see the AstraPy documentation:
+            https://docs.datastax.com/en/astra-api-docs/_attachments/python-client/astrapy/index.html#astrapy.Table.insert_one
+        """
         chunk_id = uuid.uuid4()
+        precomputed_embeddings = precomputed_embeddings or {}
 
-        insertions = {"chunk_id": chunk_id, "content": text_chunk}
+        insertion = {"chunk_id": chunk_id, "content": text_chunk}
+
         for options in self.vector_column_options:
-            if options.vector_service_options:
-                insertions[options.column_name] = text_chunk
-            else:
-                insertions[options.column_name] = options.model.encode(text_chunk).tolist()
+            if options.type == VectorColumnType.VECTORIZE:
+                insertion[options.column_name] = text_chunk
+            elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
+                insertion[options.column_name] = options.model.encode(text_chunk).tolist()
+            elif options.type == VectorColumnType.PRECOMPUTED:
+                if options.column_name not in precomputed_embeddings:
+                    raise ValueError(
+                        f"""Precomputed embeddings required for column 
+                        '{options.column_name}' but not provided"""
+                    )
+                insertion[options.column_name] = precomputed_embeddings[options.column_name]
         
-        self.table.insert_one(insertions)
+        return self.table.insert_one(insertion, **kwargs)
         
-    def bulk_insert_chunks(self, text_chunks: List[str], batch_size: int = 100) -> None:
-        """Insert multiple text chunks in batches.
-        
+    def bulk_insert_chunks(
+            self,
+            text_chunks: List[str],
+            precomputed_embeddings: Optional[Dict[str, List[List[float]]]] = None,
+            **kwargs,
+        ) -> Optional[TableInsertManyResult]:
+        """Insert multiple text chunks in a single operation.
+    
         Args:
             text_chunks: List of text chunks to insert
-            batch_size: Number of documents to insert in a single batch operation
-        """
-        # Process text chunks in batches
-        for i in range(0, len(text_chunks), batch_size):
-            batch = text_chunks[i:i+batch_size]
-            
-            batch_inserts = []
-            for text_chunk in batch:
-                chunk_id = uuid.uuid4()
-                insertion = {"chunk_id": chunk_id, "content": text_chunk}
+            precomputed_embeddings: Dictionary mapping column names to lists of embeddings,
+                where each list corresponds to a text chunk at the same index
+            **kwargs: Additional arguments passed directly to the DataAPI's insert_many method.
+                Common options include:
+                - chunk_size: How many rows to include in each API request (default: system-optimized)
+                - concurrency: Maximum number of concurrent requests (default: system-optimized)
+                - ordered: If True, rows are processed sequentially, stopping on first error
                 
-                for options in self.vector_column_options:
-                    if options.vector_service_options:
-                        insertion[options.column_name] = text_chunk
-                    else:
-                        insertion[options.column_name] = options.model.encode(text_chunk).tolist()
-                        
-                batch_inserts.append(insertion)
+        Note:
+            For detailed information on all available options, refer to the AstraPy DataAPI 
+            documentation for the insert_many method.
+            https://docs.datastax.com/en/astra-api-docs/_attachments/python-client/astrapy/index.html#astrapy.Table.insert_many
+        """
+        precomputed_embeddings = precomputed_embeddings or {}
+
+        batch_inserts = []
+
+        for j, text_chunk in enumerate(text_chunks):
+            chunk_id = uuid.uuid4()
+            insertion = {"chunk_id": chunk_id, "content": text_chunk}
             
-            # Insert the batch
-            if batch_inserts:
-                self.table.insert_many(batch_inserts)
+            for options in self.vector_column_options:
+                if options.type == VectorColumnType.VECTORIZE:
+                    insertion[options.column_name] = text_chunk
+                elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
+                    insertion[options.column_name] = options.model.encode(text_chunk).tolist()
+                elif options.type == VectorColumnType.PRECOMPUTED:
+                    if options.column_name not in precomputed_embeddings:
+                        raise ValueError(
+                            f"Precomputed embeddings required for column '{options.column_name}' but not provided"
+                        )
+                    column_embeddings = precomputed_embeddings[options.column_name]
+                    if j >= len(column_embeddings):
+                        raise ValueError(
+                            f"Not enough precomputed embeddings provided for column '{options.column_name}'"
+                        )
+                    insertion[options.column_name] = column_embeddings[j]
+                        
+            batch_inserts.append(insertion)
     
-    def search_by_text(
+        if batch_inserts:
+            return self.table.insert_many(batch_inserts, **kwargs)
+    
+    def multi_vector_similarity_search(
         self, 
-        query_text: str, 
-        vector_column: str = None,
-        limit: int = 10
+        query_text: str,
+        vector_columns: Optional[List[str]] = None,
+        precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+        candidates_per_column: int = 10,
+        **kwargs
     ) -> List[Dict[str, Any]]:
-        """Search for chunks by text similarity.
+        """Search across multiple vector columns and combine results.
         
         Args:
-            query_text: The text to search for.
-            vector_column: The vector column to use for the search. If None, uses the first column.
-            limit: Maximum number of results to return.
-        
+            query_text: The text query to search for
+            vector_columns: List of vector columns to search. If None, uses all columns.
+            precomputed_embeddings: Optional pre-computed query embeddings for PRECOMPUTED columns
+            candidates_per_column: Number of candidates to retrieve per column (default: 10)
+            **kwargs: Additional parameters passed to the underlying find method
+            
         Returns:
-            A list of matching documents.
+            A list of unique matching documents from all vector columns, including information 
+            about which columns returned each document, at what rank, and with what similarity score
         """
-        if vector_column is None:
-            # Use the first vector column by default
-            vector_column = self.vector_column_options[0].column_name
+        precomputed_embeddings = precomputed_embeddings or {}
+
+        vector_columns = vector_columns or [opt.column_name for opt in self.vector_column_options]
+        
+        for col in vector_columns:
+            if not any(opt.column_name == col for opt in self.vector_column_options):
+                raise ValueError(f"Vector column '{col}' not found")
+        
+        all_results = []
+        doc_id_to_result = {}
+        doc_id_to_columns = {}
+        
+        for col in vector_columns:
+            options = next(opt for opt in self.vector_column_options if opt.column_name == col)
             
-        # Find the appropriate vector column options
-        options = next((opt for opt in self.vector_column_options 
-                      if opt.column_name == vector_column), None)
-        if not options:
-            raise ValueError(f"Vector column '{vector_column}' not found")
+            if options.type == VectorColumnType.VECTORIZE:
+                query = query_text
+            elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
+                query = options.model.encode(query_text).tolist()
+            elif options.type == VectorColumnType.PRECOMPUTED:
+                if col not in precomputed_embeddings:
+                    raise ValueError(f"Precomputed embedding required for column '{col}'")
+                query = precomputed_embeddings[col]
             
-        if options.vector_service_options:
-            # For vectorize, use the text directly
-            query = query_text
-        else:
-            # For client-side embedding
-            query = options.model.encode(query_text).tolist()
+            col_results = self.table.find(
+                sort={col: query},
+                limit=candidates_per_column,
+                include_similarity=True,
+                **kwargs
+            ).to_list()
             
-        # Perform the vector search using sort with the vector column
-        results = self.table.find(
-            filter={},
-            sort={vector_column: query},
-            limit=limit
+            for rank, doc in enumerate(col_results):
+                doc_id, similarity = doc.get("chunk_id"), doc.get("$similarity")
+                if not doc_id:
+                    warnings.warn(f"Document without chunk_id found in column '{col}' results (rank {rank+1}). Skipping this document.")
+                    continue
+                
+                if doc_id in doc_id_to_result:
+                    doc_id_to_columns[doc_id].append({
+                        "column": col,
+                        "rank": rank + 1,
+                        "similarity": similarity
+                    })
+                else:
+                    doc_id_to_result[doc_id] = doc
+                    doc_id_to_columns[doc_id] = [{
+                        "column": col,
+                        "rank": rank + 1,
+                        "similarity": similarity
+                    }]
+                    all_results.append(doc)
+        
+        for doc in all_results:
+            doc_id = doc.get("chunk_id")
+            if doc_id and doc_id in doc_id_to_columns:
+                doc["source_columns"] = doc_id_to_columns[doc_id]
+        
+        return all_results
+    
+    def rerank_results(
+        self,
+        query_text: str,
+        results: List[Dict[str, Any]],
+        reranker: Reranker,
+        limit: Optional[int] = None
+    ) -> RankedResults:
+        """Rerank search results using a reranker.
+        
+        Args:
+            query_text: The original query text
+            results: List of results to rerank (typically from multi_vector_similarity_search)
+            reranker: Reranker instance to use for reranking
+            limit: Maximum number of results to return. If None, returns all reranked results.
+            
+        Returns:
+            The RankedResults object from the reranker, potentially limited to the specified number of results
+        """
+        if not results:
+            return []
+            
+        texts = [doc["content"] for doc in results]
+        doc_ids = [doc["chunk_id"] for doc in results]
+        
+        ranked_results = reranker.rank(query=query_text, docs=texts, doc_ids=doc_ids)
+        
+        if limit is not None and limit < len(ranked_results.results):
+            ranked_results.results = ranked_results.results[:limit]
+            
+        return ranked_results
+    
+    def search_and_rerank(
+        self,
+        query_text: str,
+        reranker: Reranker,
+        vector_columns: Optional[List[str]] = None,
+        precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
+        candidates_per_column: int = 10,
+        rerank_limit: Optional[int] = None,
+        **kwargs
+    ) -> RankedResults:
+        """Search across multiple vector columns and rerank results.
+        
+        Args:
+            query_text: The text query to search for
+            reranker: Reranker instance to use for reranking
+            vector_columns: List of vector columns to search
+            precomputed_embeddings: Pre-computed query embeddings for PRECOMPUTED columns
+            candidates_per_column: Number of candidates to retrieve per column
+            rerank_limit: Maximum number of results after reranking
+            **kwargs: Additional parameters for the underlying find method
+            
+        Returns:
+            Reranked search results
+        """
+        rerank_limit = rerank_limit or candidates_per_column
+        
+        search_results = self.multi_vector_similarity_search(
+            query_text=query_text,
+            vector_columns=vector_columns,
+            precomputed_embeddings=precomputed_embeddings,
+            candidates_per_column=candidates_per_column,
+            **kwargs
         )
         
-        return results
+        reranked_results = self.rerank_results(
+            query_text=query_text,
+            results=search_results, 
+            reranker=reranker,
+            limit=rerank_limit
+        )
+        
+        return reranked_results
         
     def batch_search_by_text(
         self,
         queries: List[str],
-        vector_column: str = None,
-        limit: int = 10
-    ) -> List[List[Dict[str, Any]]]:
-        """Perform multiple text similarity searches.
+        vector_columns: Optional[List[str]] = None,
+        precomputed_embeddings: Optional[List[Dict[str, List[float]]]] = None,
+        candidates_per_column: int = 10,
+        rerank: bool = True,
+        reranker: Optional[Reranker] = None,
+        rerank_limit: Optional[int] = None,
+        **kwargs
+    ) -> Union[List[List[Dict[str, Any]]], List[RankedResults]]:
+        """Perform multiple text similarity searches across vector columns with optional reranking.
         
         Args:
             queries: List of text queries to search for
-            vector_column: The vector column to use for the search
-            limit: Maximum number of results to return per query
+            vector_columns: List of vector columns to search. If None, uses all columns.
+            precomputed_embeddings: Optional list of pre-computed query embeddings for 
+                                   PRECOMPUTED columns, one dict per query
+            candidates_per_column: Number of candidates to retrieve per column (default: 10)
+            rerank: Whether to rerank the results (default: True)
+            reranker: Reranker instance to use for reranking. Required if rerank=True.
+            rerank_limit: Maximum number of results to return after reranking.
+                         If None, returns all reranked results.
+            **kwargs: Additional parameters passed to the underlying find method
             
         Returns:
-            List of search results for each query
+            If rerank=False: List of search results for each query
+            If rerank=True: List of RankedResults objects for each query
         """
-        results = []
-        for query in queries:
-            query_results = self.search_by_text(
-                query_text=query,
-                vector_column=vector_column,
-                limit=limit
+        if rerank and not reranker:
+            raise ValueError("reranker must be provided when rerank=True")
+            
+        if precomputed_embeddings and len(precomputed_embeddings) != len(queries):
+            raise ValueError(
+                f"Number of precomputed embeddings ({len(precomputed_embeddings)}) "
+                f"must match number of queries ({len(queries)})"
             )
-            results.append(query_results)
+            
+        results = []
+        for i, query in enumerate(queries):
+            query_embeddings = None
+            if precomputed_embeddings and i < len(precomputed_embeddings):
+                query_embeddings = precomputed_embeddings[i]
+                
+            query_results = self.multi_vector_similarity_search(
+                query_text=query,
+                vector_columns=vector_columns,
+                precomputed_embeddings=query_embeddings,
+                candidates_per_column=candidates_per_column,
+                **kwargs
+            )
+            
+            if rerank and reranker and query_results:
+                ranked_results = self.rerank_results(
+                    query_text=query,
+                    results=query_results,
+                    reranker=reranker,
+                    limit=rerank_limit
+                )
+                results.append(ranked_results)
+            else:
+                results.append(query_results)
             
         return results
