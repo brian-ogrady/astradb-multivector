@@ -174,6 +174,72 @@ load_dotenv()
 asyncio.run(main())
 ```
 
+## Late Interaction
+
+The library includes an optional sub-module for late interaction retrieval, which defers matching between query and document tokens until retrieval time, providing higher accuracy than traditional dense retrieval methods.
+
+```python
+import uuid
+from astrapy.database import AsyncDatabase
+from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
+
+# Initialize database and model
+db = AsyncDatabase(token="your-token", api_endpoint="your-api-endpoint")
+model = ColBERTModel(model_name="answerdotai/answerai-colbert-small-v1")
+
+# Create pipeline with optimization options
+pipeline = LateInteractionPipeline(
+    db=db,
+    model=model,
+    base_table_name="my_colbert_index",
+    doc_pool_factor=2,  # Compress document tokens by this factor
+    query_pool_distance=0.03,  # Pool similar query tokens
+    default_concurrency_limit=10,  # Control parallel operations
+)
+
+# Initialize tables
+await pipeline.initialize()
+
+# Index documents with dictionary format
+doc_row = {
+    "content": "This is a sample document for testing late interaction retrieval.",
+    "doc_id": uuid.uuid4()  # Optional: auto-generated if not provided
+}
+doc_id = await pipeline.index_document(doc_row)
+
+# Batch indexing with concurrency control
+docs = [
+    {"content": "Document one for batch indexing"},
+    {"content": "Document two for batch indexing"},
+    {"content": "Document three for batch indexing"}
+]
+doc_ids = await pipeline.bulk_index_documents(
+    document_rows=docs,
+    concurrency=5,
+    batch_size=2
+)
+
+# Search with auto-scaled parameters
+results = await pipeline.search(
+    query="sample retrieval", 
+    k=5,  # Number of results to return
+    # Optional parameters, auto-calculated if not provided:
+    n_ann_tokens=200,         # Tokens to retrieve per query token
+    n_maxsim_candidates=20    # Document candidates for scoring
+)
+
+# Process search results
+for doc_id, score, content in results:
+    print(f"Document: {doc_id}, Score: {score:.4f}")
+    print(f"Content: {content}")
+```
+
+Supported models include:
+- **ColBERT**: Text-to-text token-level matching for high-precision search
+- **ColPali**: Multimodal token-level matching supporting image-to-text and text-to-image search
+
+For more details, see the [Late Interaction README](src/astra_multivector/late_interaction/README.md).
+
 ## API Reference
 
 ### VectorColumnOptions
