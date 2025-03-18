@@ -74,15 +74,12 @@ Optional dependencies for late interaction models:
 ## Quick Start
 
 ```python
-from astrapy.database import Database
+from astrapy import DataAPIClient
 from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
 from sentence_transformers import SentenceTransformer
 
 # Create database connection
-db = Database(
-    token="your-token",
-    api_endpoint="your-api-endpoint"
-)
+db = DataAPIClient(token="your-token").get_database(api_endpoint="your-api-endpoint")
 
 # Create embedding models and vector options
 english_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
@@ -167,7 +164,7 @@ openai_options = VectorColumnOptions.from_vectorize(
         provider='openai',
         model_name='text-embedding-3-small',
         authentication={
-            "providerKey": "OPENAI_API_KEY",
+            "providerKey": "OPENAI_API_KEY_ASTRA_KMS_NAME",
         },
     ),
     table_vector_index_options=TableVectorIndexOptions(
@@ -294,7 +291,7 @@ from astrapy.database import AsyncDatabase
 from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
 
 # Initialize database and model
-db = AsyncDatabase(token="your-token", api_endpoint="your-api-endpoint")
+db = DataAPIClient(token="your-token").get_async_database(api_endpoint="your-api-endpoint")
 model = ColBERTModel(model_name="answerdotai/answerai-colbert-small-v1")
 
 # Create pipeline with optimization options
