@@ -56,15 +56,20 @@ pip install -e .
 
 - Python 3.8 or higher
 - Dependencies:
-  - astrapy >= 0.7.0
-  - pydantic >= 2.0.0
-  - sentence-transformers >= 2.4.0
-  - torch >= 2.0.0
-  - reranker >= 0.2.0
-  - numpy >= 1.0.0
+  - astrapy >= 2.0.0
+  - pydantic>=2.10.6
+  - python-dotenv>=1.0.1
+  - sentence-transformers>=3.4.1
+  - rerankers[api,transformers]>=0.8.0
+  - tqdm>=4.67.1
 
 Optional dependencies for late interaction models:
   - colbert-ai >= 0.2.0
+  - colpali-engine>=0.3.1,<0.4.0
+  - torch >= 2.0.0
+  - transformers>=4.38.2
+  - scikit-learn>=1.3.0
+  - numpy>=1.24.0
 
 ## Quick Start
 
@@ -188,7 +193,7 @@ The multi-vector architecture stores multiple vector representations of the same
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │ Table: my_vectors                                                              │
 ├────────────┬─────────────────────┬──────────────────┬──────────────────────────┤
-│ chunk_id   │ content             │ english_embeddings│ spanish_embeddings      │
+│ chunk_id   │ content             │ english_embeddings│ multi-lingual embeddings│
 ├────────────┼─────────────────────┼──────────────────┼──────────────────────────┤
 │ UUID-1     │ "Hello world"       │ [0.1, 0.2, ...]  │ [0.3, 0.4, ...]         │
 │ UUID-2     │ "Vector search"     │ [0.5, 0.6, ...]  │ [0.7, 0.8, ...]         │
@@ -196,10 +201,10 @@ The multi-vector architecture stores multiple vector representations of the same
      │                │                    │                   │
      │                │                    │                   │
      │                │                    ▼                   ▼
-     │                │             ┌─────────────┐    ┌─────────────┐
-     │                │             │ Vector Index│    │ Vector Index│
-     │                │             │ (english)   │    │ (spanish)   │
-     │                │             └─────────────┘    └─────────────┘
+     │                │             ┌─────────────┐    ┌───────────────┐
+     │                │             │ Vector Index│    │ Vector Index  │
+     │                │             │ (english)   │    │(multi-lingual)│
+     │                │             └─────────────┘    └───────────────┘
      │                │
      │                ▼
      │         Used directly for
