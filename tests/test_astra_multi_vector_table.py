@@ -1,12 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch, call
-import uuid
-import warnings
 
-from astrapy.database import Database, Table
-from astrapy.info import CreateTableDefinition, ColumnType, TableVectorIndexOptions
+from astrapy import Database, Table
+from astrapy.info import TableVectorIndexOptions
 from sentence_transformers import SentenceTransformer
-from reranker import Reranker, RankedResults
+from rerankers import Reranker, RankedResults
 
 from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
 
