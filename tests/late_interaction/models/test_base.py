@@ -15,7 +15,8 @@ from astra_multivector.late_interaction import LateInteractionModel
 class TestModel(LateInteractionModel):
     """Concrete implementation of LateInteractionModel for testing."""
     
-    def __init__(self, dim=4):
+    def __init__(self, dim=4, device=None):
+        super().__init__(device=device)
         self._dim = dim
         self._model_name = "test_model"
     
@@ -46,6 +47,21 @@ class TestLateInteractionModel(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.model = TestModel()
+        
+    @patch('astra_multivector.late_interaction.models.base.LateInteractionModel._get_optimal_device')
+    def test_device_initialization(self, mock_get_optimal_device):
+        """Test that device is initialized correctly."""
+        # Test with default device
+        mock_get_optimal_device.return_value = "cpu"
+        model = TestModel()
+        self.assertEqual(model._device, "cpu")
+        
+        # Test with specified device
+        model = TestModel(device="cuda:1")
+        self.assertEqual(model._device, "cuda:1")
+        
+        # Verify the optimal device method was called once
+        mock_get_optimal_device.assert_called_once()
     
     def test_score_single(self):
         """Test the score method with a single document."""
@@ -131,15 +147,16 @@ class TestLateInteractionModel(unittest.TestCase):
         
         # Empty document list
         empty_D = []
-        with self.assertRaises(Exception):
-            # Should raise exception with empty document list
+        with self.assertRaises(RuntimeError):
+            # Should raise RuntimeError due to empty list in pad_sequence
             self.model.score(Q, empty_D)
         
         # Zero embeddings
         zero_D = [torch.zeros(3, 4)]
-        with self.assertRaises(Exception):
-            # Should raise exception with zero document embeddings
-            self.model.score(Q, zero_D)
+        # This should not raise an exception now that we handle zeros properly
+        scores = self.model.score(Q, zero_D)
+        # Should have zero similarity
+        self.assertAlmostEqual(scores[0].item(), 0.0, places=5)
     
     def test_embeddings_to_numpy(self):
         """Test conversion from embeddings to numpy."""
@@ -190,6 +207,205 @@ class TestLateInteractionModel(unittest.TestCase):
     def test_supports_images_default(self):
         """Test that supports_images property defaults to False."""
         self.assertFalse(self.model.supports_images)
+        
+    @patch('torch.cuda.is_available')
+    @patch('torch.cuda.device_count')
+    @patch('torch.backends.mps.is_available')
+    def test_get_optimal_device(self, mock_mps_available, mock_cuda_count, mock_cuda_available):
+        """Test device selection logic with different configurations."""
+        # Test case 1: CUDA available with multiple GPUs
+        mock_cuda_available.return_value = True
+        mock_cuda_count.return_value = 2
+        mock_mps_available.return_value = False
+        
+        device = LateInteractionModel._get_optimal_device()
+        self.assertEqual(device, "auto")
+        
+        # Test case 2: CUDA available with single GPU
+        mock_cuda_available.return_value = True
+        mock_cuda_count.return_value = 1
+        mock_mps_available.return_value = False
+        
+        device = LateInteractionModel._get_optimal_device()
+        self.assertEqual(device, "cuda")
+        
+        # Test case 3: MPS available, no CUDA
+        mock_cuda_available.return_value = False
+        mock_mps_available.return_value = True
+        
+        # Need to mock has_mps attribute
+        with patch.object(torch, 'has_mps', True, create=True):
+            device = LateInteractionModel._get_optimal_device()
+            self.assertEqual(device, "mps")
+        
+        # Test case 4: No accelerators available
+        mock_cuda_available.return_value = False
+        mock_mps_available.return_value = False
+        
+        device = LateInteractionModel._get_optimal_device()
+        self.assertEqual(device, "cpu")
+        
+        # Test case 5: User-specified device
+        device = LateInteractionModel._get_optimal_device("cuda:1")
+        self.assertEqual(device, "cuda:1")
+        
+    def test_score_with_padding(self):
+        """Test the score method handles documents of different lengths."""
+        # Create query embeddings
+        Q = torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ], dtype=torch.float32)
+        
+        # Create documents with different lengths
+        D = [
+            torch.tensor([  # 3 tokens
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+            ], dtype=torch.float32),
+            torch.tensor([  # 1 token
+                [1.0, 0.0, 0.0, 0.0],
+            ], dtype=torch.float32),
+        ]
+        
+        # Normalize tensors
+        Q = Q / torch.norm(Q, dim=1, keepdim=True)
+        D = [d / torch.norm(d, dim=1, keepdim=True) for d in D]
+        
+        # Calculate scores
+        scores = self.model.score(Q, D)
+        
+        # Check shape
+        self.assertEqual(scores.shape, torch.Size([2]))
+        
+        # Expected scores:
+        # Doc 1: max_sim(Q[0], D1) = 1.0, max_sim(Q[1], D1) = 1.0, total = 2.0
+        # Doc 2: max_sim(Q[0], D2) = 1.0, max_sim(Q[1], D2) = 0.0, total = 1.0
+        self.assertAlmostEqual(scores[0].item(), 2.0, places=5)
+        self.assertAlmostEqual(scores[1].item(), 1.0, places=5)
+        
+    def test_get_actual_device(self):
+        """Test getting the actual device from a PyTorch module."""
+        # Create a small test model
+        test_model = torch.nn.Linear(10, 5)
+        
+        # CPU device case
+        test_model = test_model.to("cpu")
+        device = LateInteractionModel._get_actual_device(test_model)
+        self.assertEqual(device.type, "cpu")
+        
+        # Skip GPU tests if not available to maintain test isolation
+        if torch.cuda.is_available():
+            # CUDA device case
+            test_model = test_model.to("cuda")
+            device = LateInteractionModel._get_actual_device(test_model)
+            self.assertEqual(device.type, "cuda")
+            
+    def test_score_with_nan_inf(self):
+        """Test the score method handles NaN and Inf values gracefully."""
+        # Create query embeddings
+        Q = torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ], dtype=torch.float32)
+        Q = Q / torch.norm(Q, dim=1, keepdim=True)
+        
+        # Create document embeddings with NaN
+        D_nan = [torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, float('nan'), 0.0],  # Contains NaN
+            [0.0, 0.0, 1.0, 0.0],
+        ], dtype=torch.float32)]
+        
+        # Normalize tensor while preserving NaN
+        D_nan[0][0:1] = D_nan[0][0:1] / torch.norm(D_nan[0][0:1], dim=1, keepdim=True)
+        
+        # Create document embeddings with Inf
+        D_inf = [torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, float('inf'), 0.0],  # Contains Inf
+            [0.0, 0.0, 1.0, 0.0],
+        ], dtype=torch.float32)]
+        
+        # Normalize tensor while preserving Inf
+        D_inf[0][0:1] = D_inf[0][0:1] / torch.norm(D_inf[0][0:1], dim=1, keepdim=True)
+        
+        # Create document embeddings with both NaN and Inf
+        D_mixed = [torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, float('nan'), 0.0, 0.0],  # Contains NaN
+            [0.0, 0.0, float('inf'), 0.0],  # Contains Inf
+        ], dtype=torch.float32)]
+        
+        # Normalize the first row only to preserve NaN and Inf
+        D_mixed[0][0:1] = D_mixed[0][0:1] / torch.norm(D_mixed[0][0:1], dim=1, keepdim=True)
+        
+        # Test with NaN values
+        # The operation should not crash, and the result might contain NaN
+        try:
+            scores_nan = self.model.score(Q, D_nan)
+            self.assertEqual(scores_nan.shape, torch.Size([1]))
+            
+            # At a minimum, the result should be a valid tensor without raising an exception
+            self.assertTrue(torch.is_tensor(scores_nan))
+            
+            # Some PyTorch operations may propagate NaN, others might zero them out
+            # We just verify the code doesn't crash, whichever behavior it implements
+        except Exception as e:
+            self.fail(f"score() raised {type(e).__name__} with NaN values: {str(e)}")
+        
+        # Test with Inf values
+        try:
+            scores_inf = self.model.score(Q, D_inf)
+            self.assertEqual(scores_inf.shape, torch.Size([1]))
+            self.assertTrue(torch.is_tensor(scores_inf))
+            
+            # Check specific handling of Inf based on PyTorch's default behavior
+            # If the model has special handling for Inf that converts it to a finite value,
+            # we should get a reasonable score
+            if not torch.isnan(scores_inf[0]) and not torch.isinf(scores_inf[0]):
+                self.assertTrue(scores_inf[0].item() >= 0.0)
+        except Exception as e:
+            self.fail(f"score() raised {type(e).__name__} with Inf values: {str(e)}")
+            
+        # Test with mixed NaN and Inf values
+        try:
+            scores_mixed = self.model.score(Q, D_mixed)
+            self.assertEqual(scores_mixed.shape, torch.Size([1]))
+            self.assertTrue(torch.is_tensor(scores_mixed))
+        except Exception as e:
+            self.fail(f"score() raised {type(e).__name__} with mixed NaN/Inf values: {str(e)}")
+            
+        # Test query tensor with NaN/Inf
+        Q_invalid = torch.tensor([
+            [1.0, float('nan'), 0.0, 0.0],
+            [0.0, 1.0, float('inf'), 0.0],
+        ], dtype=torch.float32)
+        
+        # Valid document embeddings
+        D_valid = [torch.tensor([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ], dtype=torch.float32)]
+        D_valid[0] = D_valid[0] / torch.norm(D_valid[0], dim=1, keepdim=True)
+        
+        # Test with invalid query embeddings
+        try:
+            scores_invalid_query = self.model.score(Q_invalid, D_valid)
+            self.assertTrue(torch.is_tensor(scores_invalid_query))
+        except Exception as e:
+            # Some PyTorch operations might raise exceptions with NaN/Inf in specific contexts
+            # If that happens, we just verify it's a known numerical error type
+            self.assertIn(type(e).__name__, ["RuntimeError", "ValueError"], 
+                          f"Unexpected exception type: {type(e).__name__}")
+            
+            # Check that the error message is related to numerical issues
+            error_msg = str(e).lower()
+            has_numerical_terms = any(term in error_msg for term in 
+                                      ["nan", "inf", "numerical", "valid"])
+            self.assertTrue(has_numerical_terms, 
+                            f"Error doesn't seem related to numerical issues: {error_msg}")
 
 
 if __name__ == "__main__":
