@@ -46,9 +46,10 @@ from late_interaction import LateInteractionPipeline, ColBERTModel
 
 async def main():
     # Initialize database connection
-    db = AsyncDatabase(
+    db = async_db = DataAPIClient(
         token="your-token",
-        api_endpoint="your-api-endpoint"
+    ).get_async_database(
+        api_endpoint="your-api-endpoint",
     )
     
     # Create a ColBERT model
@@ -102,7 +103,7 @@ The library includes several optimizations to balance retrieval quality with com
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.12+
 - PyTorch
 - AstraDB Python SDK
 - ColBERT (for text retrieval)
