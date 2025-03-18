@@ -13,7 +13,8 @@ from astrapy.info import (
     CreateTableDefinition,
 )
 from astrapy.results import TableInsertManyResult, TableInsertOneResult
-from rerankers import Reranker, RankedResults
+from rerankers import Reranker
+from rerankers.results import RankedResults
 
 from astra_multivector.vector_column_options import (
     VectorColumnOptions,

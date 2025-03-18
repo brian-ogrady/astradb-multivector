@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch, call
 from astrapy import Database, Table
 from astrapy.info import TableVectorIndexOptions
 from sentence_transformers import SentenceTransformer
-from rerankers import Reranker, RankedResults
+from rerankers import Reranker
+from rerankers.results import RankedResults
 
 from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
 

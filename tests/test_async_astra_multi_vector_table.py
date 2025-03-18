@@ -5,7 +5,8 @@ import asyncio
 from astrapy import AsyncDatabase, AsyncTable
 from astrapy.info import TableVectorIndexOptions
 from sentence_transformers import SentenceTransformer
-from rerankers import Reranker, RankedResults
+from rerankers import Reranker
+from rerankers.results import RankedResults
 
 from astra_multivector import AsyncAstraMultiVectorTable, VectorColumnOptions
 from astra_multivector.vector_column_options import VectorColumnType
