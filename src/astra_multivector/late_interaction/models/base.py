@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Union
+from typing import List, Optional, Union
 
 import torch
 import numpy as np
@@ -12,6 +12,9 @@ class LateInteractionModel(ABC):
     Late interaction models encode queries and documents into token-level embeddings,
     then perform similarity calculations between each token pair during retrieval.
     """
+
+    def __init__(self, device: Optional[str] = None):
+        self._device = device or self._get_optimal_device()
     
     @abstractmethod
     async def encode_query(self, q: str) -> torch.Tensor:
@@ -40,6 +43,42 @@ class LateInteractionModel(ABC):
             Each tensor has shape (num_tokens, embedding_dim).
         """
         pass
+
+    @staticmethod
+    def _get_actual_device(module):
+        """Get the actual device on which a PyTorch module is currently running"""
+        return next(module.parameters()).device
+
+    @staticmethod
+    def _get_optimal_device(device: Optional[str] = None) -> str:
+        """
+        Determine the appropriate device for model operations.
+        
+        This method selects the best available device in this order:
+        1. User-specified device (if provided)
+        2. "auto" if multiple CUDA devices are available
+        3. CUDA if available
+        4. MPS for Apple Silicon (if available)
+        5. CPU (fallback)
+        
+        Args:
+            device: Optional device specification ('cuda', 'cuda:0', 'mps', 'cpu', etc.)
+                If None, will automatically select the best available device.
+        
+        Returns:
+            String identifying the device to use
+        """
+        if device is not None:
+            return device
+            
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            return "auto"
+        elif torch.cuda.is_available():
+            return "cuda"
+        elif hasattr(torch, 'has_mps') and torch.has_mps and torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
     
     def score(self, Q: torch.Tensor, D: List[torch.Tensor]) -> torch.Tensor:
         """
@@ -55,19 +94,14 @@ class LateInteractionModel(ABC):
         Returns:
             A tensor of similarity scores for each document.
         """
-        Q = self.to_device(Q.unsqueeze(0))  # Add batch dimension
-        D = [self.to_device(d.to(Q.dtype)) for d in D]  # Match dtype
+        Q = self.to_device(Q.unsqueeze(0))
+        D = [self.to_device(d.to(Q.dtype)) for d in D]
         
-        # Pad document embeddings to same length for batch processing
         D_padded = torch.nn.utils.rnn.pad_sequence(D, batch_first=True, padding_value=0)
         
-        # Compute MaxSim scores using einsum
-        # - bcns: batch, chunk, query_token, doc_token
-        # - Take max similarity for each query token (dim=3)
-        # - Sum across all query tokens (dim=2)
         scores = torch.einsum("bnd,csd->bcns", Q, D_padded).max(dim=3)[0].sum(dim=2)
         
-        return scores.squeeze(0).to(torch.float32)  # Remove batch dimension and convert to float32
+        return scores.squeeze(0).to(torch.float32)
     
     def _embeddings_to_numpy(self, embeddings: torch.Tensor) -> np.ndarray:
         """Convert torch embeddings to numpy arrays for database storage"""

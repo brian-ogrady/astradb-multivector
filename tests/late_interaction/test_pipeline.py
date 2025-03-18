@@ -166,18 +166,24 @@ class TestLateInteractionPipeline(unittest.TestCase):
     async def test_index_document(self):
         """Test document indexing."""
         # Create a test document
-        content = "Test document"
         doc_id = uuid.uuid4()
+        document_row = {
+            "content": "Test document",
+            "doc_id": doc_id
+        }
         
         # Initialize the pipeline
         await self.async_setup()
+        
+        # Mock the validate row method
+        self.pipeline._validate_row = AsyncMock(return_value=(document_row, document_row["content"], doc_id))
         
         # Mock the insert methods
         self.pipeline._doc_table.insert_one = AsyncMock()
         self.pipeline._index_token_embeddings = AsyncMock(return_value=[uuid.uuid4()])
         
         # Call the method
-        result_id = await self.pipeline.index_document(content, doc_id)
+        result_id = await self.pipeline.index_document(document_row)
         
         # Verify the results
         self.assertEqual(result_id, doc_id)
@@ -187,8 +193,11 @@ class TestLateInteractionPipeline(unittest.TestCase):
     async def test_bulk_index_documents(self):
         """Test bulk document indexing."""
         # Create test documents
-        contents = ["Doc 1", "Doc 2", "Doc 3"]
         doc_ids = [uuid.uuid4() for _ in range(3)]
+        document_rows = [
+            {"content": f"Doc {i+1}", "doc_id": doc_id}
+            for i, doc_id in enumerate(doc_ids)
+        ]
         
         # Initialize the pipeline
         await self.async_setup()
@@ -198,9 +207,8 @@ class TestLateInteractionPipeline(unittest.TestCase):
         
         # Call the method
         result_ids = await self.pipeline.bulk_index_documents(
-            documents=contents,
-            doc_ids=doc_ids,
-            max_concurrency=2,
+            document_rows=document_rows,
+            concurrency=2,
             batch_size=2
         )
         

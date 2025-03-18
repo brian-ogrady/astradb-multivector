@@ -20,10 +20,11 @@ This library provides:
 The main entry point for using late interaction models with AstraDB:
 
 - Creates and manages document and token-level tables
-- Handles document indexing and storage
-- Implements efficient two-stage retrieval:
+- Handles document indexing and storage with flexible document schema
+- Implements efficient two-stage retrieval with auto-scaling parameters:
   1. ANN search to find candidate tokens
   2. MaxSim scoring for final ranking
+- Optimizes performance through token pooling and concurrency controls
 
 ### Supported Models
 
@@ -67,14 +68,18 @@ async def main():
     await pipeline.initialize()
     
     # Index documents
-    doc_id = await pipeline.index_document(
-        content="This is a sample document for testing late interaction retrieval."
-    )
+    doc_row = {
+        "content": "This is a sample document for testing late interaction retrieval.",
+        "doc_id": uuid.uuid4()
+    }
+    doc_id = await pipeline.index_document(doc_row)
     
     # Search for similar documents
     results = await pipeline.search(
         query="sample retrieval",
-        k=5  # Number of results to return
+        k=5,  # Number of results to return
+        n_ann_tokens=200,  # Optional: number of tokens to retrieve per query token
+        n_maxsim_candidates=20  # Optional: number of candidates for final scoring
     )
     
     # Print results

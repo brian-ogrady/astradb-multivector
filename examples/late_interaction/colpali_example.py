@@ -36,13 +36,38 @@ def create_image_dir():
     return img_dir
 
 
-# Sample image metadata
-SAMPLE_IMAGE_METADATA = [
-    {"title": "Mountain landscape", "tags": ["nature", "mountains", "outdoors"], "category": "landscape"},
-    {"title": "City skyline", "tags": ["urban", "buildings", "architecture"], "category": "cityscape"},
-    {"title": "Beach sunset", "tags": ["nature", "ocean", "sunset"], "category": "seascape"},
-    {"title": "Modern kitchen", "tags": ["interior", "design", "kitchen"], "category": "interior"},
-    {"title": "Dog portrait", "tags": ["animal", "pet", "dog"], "category": "pet"}
+# Sample image data
+SAMPLE_IMAGES = [
+    {
+        "title": "Mountain landscape", 
+        "tags": ["nature", "mountains", "outdoors"], 
+        "category": "landscape",
+        "description": "Mountain landscape with snow-capped peaks"
+    },
+    {
+        "title": "City skyline", 
+        "tags": ["urban", "buildings", "architecture"], 
+        "category": "cityscape",
+        "description": "Urban cityscape with modern skyscrapers"
+    },
+    {
+        "title": "Beach sunset", 
+        "tags": ["nature", "ocean", "sunset"], 
+        "category": "seascape",
+        "description": "Sunset view over calm ocean waters"
+    },
+    {
+        "title": "Modern kitchen", 
+        "tags": ["interior", "design", "kitchen"], 
+        "category": "interior",
+        "description": "Contemporary kitchen with minimalist design"
+    },
+    {
+        "title": "Dog portrait", 
+        "tags": ["animal", "pet", "dog"], 
+        "category": "pet",
+        "description": "Portrait of a happy golden retriever"
+    }
 ]
 
 
@@ -125,18 +150,35 @@ async def index_sample_images(
     
     # Index first image individually
     first_img_path, first_img = image_files[0]
-    doc_id = await pipeline.index_document(
-        content=first_img
-    )
-    doc_ids.append(doc_id)
-    print(f"Indexed image 1/5 with ID: {doc_id}")
+    first_doc_id = uuid.uuid4()
+    
+    # Create document row with image content and metadata
+    document_row = {
+        "content": first_img,
+        "doc_id": first_doc_id,
+        **SAMPLE_IMAGES[0]  # Include title, category, tags, etc.
+    }
+    
+    doc_id = await pipeline.index_document(document_row)
+    if doc_id:
+        doc_ids.append(doc_id)
+        print(f"Indexed image 1/5 with ID: {doc_id}")
     
     # Index remaining images in bulk
-    remaining_images = [img for _, img in image_files[1:]]
+    remaining_images = image_files[1:]
+    document_rows = []
+    
+    # Create document rows with images and metadata
+    for i, (_, img) in enumerate(remaining_images):
+        document_rows.append({
+            "content": img,
+            "doc_id": uuid.uuid4(),
+            **SAMPLE_IMAGES[i+1]  # Include title, category, tags, etc. for this image
+        })
     
     bulk_ids = await pipeline.bulk_index_documents(
-        documents=remaining_images,
-        max_concurrency=3,
+        document_rows=document_rows,
+        concurrency=3,
         batch_size=2
     )
         
@@ -158,7 +200,8 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
+        # Note: The content field may contain "image_document" for image content
+        # In a real application, you'd retrieve the full document by ID
     
     # Search with custom parameters
     query = "urban setting"
@@ -171,7 +214,8 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
+        print(f"   Document ID: {doc_id}")
+        # Additional fields can be retrieved with the document ID
     
     # Detailed search with customized parameters
     query = "beach with sunset"
@@ -187,8 +231,9 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Image Title: {SAMPLE_IMAGE_METADATA[i]['title'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
-        print(f"   Category: {SAMPLE_IMAGE_METADATA[i]['category'] if i < len(SAMPLE_IMAGE_METADATA) else 'Unknown'}")
+        print(f"   Document ID: {doc_id}")
+        # In a production application, you would use the document ID
+        # to retrieve the full document with all its fields
 
 
 async def main():

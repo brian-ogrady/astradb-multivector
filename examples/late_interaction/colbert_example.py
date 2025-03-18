@@ -29,23 +29,33 @@ from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTM
 SAMPLE_DOCUMENTS = [
     {
         "content": "AstraDB is a vector database that enables developers to build AI applications with vector search.",
-        "metadata": {"source": "docs", "topic": "database", "category": "technical"}
+        "source": "docs", 
+        "topic": "database", 
+        "category": "technical"
     },
     {
         "content": "Vector search allows you to find similar items based on their vector embeddings rather than exact keyword matches.",
-        "metadata": {"source": "docs", "topic": "search", "category": "technical"}
+        "source": "docs", 
+        "topic": "search", 
+        "category": "technical"
     },
     {
         "content": "Late interaction models like ColBERT provide higher accuracy than dense retrievers by comparing individual token pairs.",
-        "metadata": {"source": "blog", "topic": "retrieval", "category": "technical"}
+        "source": "blog", 
+        "topic": "retrieval", 
+        "category": "technical"
     },
     {
         "content": "Python is a high-level programming language known for its readability and simplicity.",
-        "metadata": {"source": "wiki", "topic": "programming", "category": "education"}
+        "source": "wiki", 
+        "topic": "programming", 
+        "category": "education"
     },
     {
         "content": "Machine learning algorithms learn patterns from data to make predictions or decisions without explicit programming.",
-        "metadata": {"source": "course", "topic": "ai", "category": "education"}
+        "source": "course", 
+        "topic": "ai", 
+        "category": "education"
     },
 ]
 
@@ -103,19 +113,27 @@ async def index_sample_documents(pipeline: LateInteractionPipeline) -> List[uuid
     
     # Index documents individually
     for i, doc in enumerate(SAMPLE_DOCUMENTS[:2]):
-        doc_id = await pipeline.index_document(
-            content=doc["content"]
-        )
-        doc_ids.append(doc_id)
-        print(f"Indexed document {i+1}/2 with ID: {doc_id}")
+        # Create document row with content and metadata
+        document_row = {
+            **doc,  # Include all fields (content, source, topic, category)
+            "doc_id": uuid.uuid4()
+        }
+        
+        doc_id = await pipeline.index_document(document_row)
+        if doc_id:
+            doc_ids.append(doc_id)
+            print(f"Indexed document {i+1}/2 with ID: {doc_id}")
     
     # Index remaining documents in bulk
     remaining_docs = SAMPLE_DOCUMENTS[2:]
-    bulk_contents = [doc["content"] for doc in remaining_docs]
+    document_rows = [
+        {**doc, "doc_id": uuid.uuid4()} 
+        for doc in remaining_docs
+    ]
     
     bulk_ids = await pipeline.bulk_index_documents(
-        documents=bulk_contents,
-        max_concurrency=3
+        document_rows=document_rows,
+        concurrency=3
     )
     
     doc_ids.extend(bulk_ids)
@@ -136,7 +154,8 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
+        # Note: In a real application, you would use the doc_id to fetch the
+        # complete document from the pipeline or database
     
     # Search with custom parameters
     query = "programming"
@@ -149,7 +168,7 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
+        # In a production app, you could retrieve additional document fields here
     
     # Advanced search with customized parameters
     query = "machine learning algorithms"
@@ -166,7 +185,7 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
         print(f"   Content: {content}")
-        print(f"   Source: {SAMPLE_DOCUMENTS[i]['metadata'].get('source', 'unknown') if i < len(SAMPLE_DOCUMENTS) else 'unknown'}")
+        # You can also use document ID to fetch complete document
 
 
 async def main():
