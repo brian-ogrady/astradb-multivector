@@ -53,10 +53,10 @@ See the [late_interaction README](late_interaction/README.md) for more details.
 Before running these examples, make sure you have:
 
 1. An AstraDB instance with an API token and endpoint
-2. Python 3.8 or higher
+2. Python 3.12 or higher
 3. Required dependencies installed:
    ```bash
-   pip install astra-multivector[all]
+   pip install astra-multivector
    ```
 4. Environment variables set up (or use a `.env` file):
    ```bash
