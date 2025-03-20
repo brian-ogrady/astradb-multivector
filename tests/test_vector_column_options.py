@@ -12,7 +12,15 @@ from astra_multivector.vector_column_options import VectorColumnType
 class TestVectorColumnOptions(unittest.TestCase):
     
     def test_from_sentence_transformer_with_default_name(self):
-        # Mock SentenceTransformer
+        """Test VectorColumnOptions.from_sentence_transformer with default column name.
+        
+        Verifies that:
+        - Column name defaults to the model's base_model name with hyphens replaced by underscores
+        - Dimension is correctly extracted from the model
+        - Model is properly stored
+        - Vector service options and table vector index options are None by default
+        - Type is set to SENTENCE_TRANSFORMER
+        """
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
 
@@ -20,57 +28,63 @@ class TestVectorColumnOptions(unittest.TestCase):
         mock_card_data.base_model = "test-model"
         mock_model.model_card_data = mock_card_data
         
-        # Test with default column name
         options = VectorColumnOptions.from_sentence_transformer(model=mock_model)
         
-        # Assertions
         self.assertEqual(options.column_name, "test_model")
         self.assertEqual(options.dimension, 768)
         self.assertEqual(options.model, mock_model)
         self.assertIsNone(options.vector_service_options)
         self.assertIsNone(options.table_vector_index_options)
-        
-        # Verify type is correctly set
         self.assertEqual(options.type, VectorColumnType.SENTENCE_TRANSFORMER)
     
     def test_from_sentence_transformer_with_custom_name(self):
-        # Mock SentenceTransformer
+        """Test VectorColumnOptions.from_sentence_transformer with custom column name and index options.
+        
+        Verifies that:
+        - Custom column name overrides the default
+        - Custom table vector index options are properly used
+        - Dimension is correctly extracted from the model
+        - Vector service options default to None
+        - Type is set to SENTENCE_TRANSFORMER
+        """
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
         mock_model.model_card_data = MagicMock(base_model="test-model")
         
-        # Create custom index options
         index_options = TableVectorIndexOptions(metric=VectorMetric.COSINE)
         
-        # Test with custom column name and index options
         options = VectorColumnOptions.from_sentence_transformer(
             model=mock_model,
             column_name="custom_embeddings",
             table_vector_index_options=index_options
         )
         
-        # Assertions
         self.assertEqual(options.column_name, "custom_embeddings")
         self.assertEqual(options.dimension, 768)
         self.assertEqual(options.model, mock_model)
         self.assertIsNone(options.vector_service_options)
         self.assertEqual(options.table_vector_index_options, index_options)
-        
-        # Verify type is correctly set
         self.assertEqual(options.type, VectorColumnType.SENTENCE_TRANSFORMER)
     
     def test_from_vectorize(self):
-        # Create vectorize options
+        """Test VectorColumnOptions.from_vectorize factory method.
+        
+        Verifies that:
+        - Column name is set correctly
+        - Dimension is set correctly
+        - Model is None
+        - Vector service options are properly stored
+        - Table vector index options are properly stored
+        - Type is set to VECTORIZE
+        """
         vector_options = VectorServiceOptions(
             provider="openai",
             model_name="text-embedding-3-small",
             authentication={"providerKey": "test-key"}
         )
         
-        # Create index options
         index_options = TableVectorIndexOptions(metric=VectorMetric.COSINE)
         
-        # Test creating options for Vectorize
         options = VectorColumnOptions.from_vectorize(
             column_name="openai_embeddings",
             dimension=1536,
@@ -78,44 +92,52 @@ class TestVectorColumnOptions(unittest.TestCase):
             table_vector_index_options=index_options
         )
         
-        # Assertions
         self.assertEqual(options.column_name, "openai_embeddings")
         self.assertEqual(options.dimension, 1536)
         self.assertIsNone(options.model)
         self.assertEqual(options.vector_service_options, vector_options)
         self.assertEqual(options.table_vector_index_options, index_options)
-        
-        # Verify type is correctly set
         self.assertEqual(options.type, VectorColumnType.VECTORIZE)
     
     def test_from_precomputed_embeddings(self):
-        # Create index options
+        """Test VectorColumnOptions.from_precomputed_embeddings factory method.
+        
+        Verifies that:
+        - Column name is set correctly
+        - Dimension is set correctly
+        - Model is None
+        - Vector service options are None
+        - Table vector index options are properly stored
+        - Type is set to PRECOMPUTED
+        """
         index_options = TableVectorIndexOptions(metric=VectorMetric.DOT_PRODUCT)
         
-        # Test creating options for precomputed embeddings
         options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="precomputed_embeddings",
             dimension=512,
             table_vector_index_options=index_options
         )
         
-        # Assertions
         self.assertEqual(options.column_name, "precomputed_embeddings")
         self.assertEqual(options.dimension, 512)
         self.assertIsNone(options.model)
         self.assertIsNone(options.vector_service_options)
         self.assertEqual(options.table_vector_index_options, index_options)
-        
-        # Verify type is correctly set
         self.assertEqual(options.type, VectorColumnType.PRECOMPUTED)
     
     def test_to_dict(self):
-        # Create test options with all fields set
-        # Mock SentenceTransformer
+        """Test VectorColumnOptions.to_dict method.
+        
+        Verifies that:
+        - Method correctly serializes all options into a dictionary format
+        - All expected fields are present with correct values
+        - Different types of options are correctly represented
+        - Nested objects like table_vector_index_options are also serialized
+        - Tests with multiple types of VectorColumnOptions
+        """
         mock_model = SentenceTransformer("all-MiniLM-L6-v2")  # Load a lightweight real model
         mock_model.model_name = "test-model"  # Manually override model_name
 
-        # Create model_card_data attribute
         class FakeModelCard:
             base_model = "test-model"
 
@@ -129,11 +151,8 @@ class TestVectorColumnOptions(unittest.TestCase):
             table_vector_index_options=index_options
         )
         
-        # Call to_dict
         result = options.to_dict()
         
-
-        # Assertions
         self.assertIsInstance(result, dict)
         self.assertEqual(result["column_name"], "embeddings")
         self.assertEqual(result["dimension"], 384)
@@ -179,7 +198,12 @@ class TestVectorColumnOptions(unittest.TestCase):
         self.assertIsNone(result["table_vector_index_options"])
     
     def test_type_property(self):
-        # Create options using different factory methods
+        """Test the type property of VectorColumnOptions.
+        
+        Verifies that:
+        - The type property returns the correct VectorColumnType enum value for each factory method
+        - The type property is read-only and cannot be modified
+        """
         st_options = VectorColumnOptions.from_sentence_transformer(
             model=MagicMock(spec=SentenceTransformer, 
                           get_sentence_embedding_dimension=lambda: 768,
@@ -201,17 +225,22 @@ class TestVectorColumnOptions(unittest.TestCase):
             dimension=512
         )
         
-        # Verify types are correctly set
         self.assertEqual(st_options.type, VectorColumnType.SENTENCE_TRANSFORMER)
         self.assertEqual(vector_options.type, VectorColumnType.VECTORIZE)
         self.assertEqual(precomputed_options.type, VectorColumnType.PRECOMPUTED)
         
-        # Verify type is read-only
         with self.assertRaises(AttributeError):
             st_options.type = VectorColumnType.PRECOMPUTED
     
     def test_validation_errors(self):
-        # Test missing required parameters
+        """Test validation errors in VectorColumnOptions factory methods.
+        
+        Verifies that:
+        - Required parameters cannot be omitted (column_name, dimension, model)
+        - TypeError is raised when required parameters are missing
+        - ValueError is raised when parameters have incorrect types
+        - Tests all factory methods for proper validation
+        """
         with self.assertRaises(TypeError):
             # Missing column_name
             VectorColumnOptions.from_precomputed_embeddings(dimension=512)
@@ -244,7 +273,12 @@ class TestVectorColumnOptions(unittest.TestCase):
             )
     
     def test_model_config(self):
-        # Verify that arbitrary_types_allowed is set to True
+        """Test the model_config settings of VectorColumnOptions.
+        
+        Verifies that the Pydantic model configuration has arbitrary_types_allowed
+        set to True, which is necessary for storing non-serializable objects like
+        SentenceTransformer models.
+        """
         self.assertTrue(VectorColumnOptions.model_config.get("arbitrary_types_allowed"))
 
 
