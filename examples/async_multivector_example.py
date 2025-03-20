@@ -128,10 +128,10 @@ async def simple_vector_search(table: AsyncAstraMultiVectorTable) -> None:
     # Search using the primary embedding model
     query = "How do neural networks work?"
     print(f"Searching for: '{query}' using primary embeddings")
-    results = await table.search_by_text(
+    results = await table.multi_vector_similarity_search(
         query_text=query,
-        vector_column="embeddings",  # Default from sentence_transformer
-        limit=2
+        vector_columns=["embeddings"],  # Default from sentence_transformer
+        candidates_per_column=2
     )
     
     print("Results from primary embeddings:")
@@ -140,10 +140,10 @@ async def simple_vector_search(table: AsyncAstraMultiVectorTable) -> None:
     
     # Search using the OpenAI embeddings
     print(f"\nSearching for: '{query}' using OpenAI embeddings")
-    results = await table.search_by_text(
+    results = await table.multi_vector_similarity_search(
         query_text=query,
-        vector_column="openai_embeddings",
-        limit=2
+        vector_columns=["openai_embeddings"],
+        candidates_per_column=2
     )
     
     print("Results from OpenAI embeddings:")

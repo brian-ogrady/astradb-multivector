@@ -15,7 +15,10 @@ class TestVectorColumnOptions(unittest.TestCase):
         # Mock SentenceTransformer
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
-        mock_model.model_card_data.base_model = "test-model"
+
+        mock_card_data = MagicMock()
+        mock_card_data.base_model = "test-model"
+        mock_model.model_card_data = mock_card_data
         
         # Test with default column name
         options = VectorColumnOptions.from_sentence_transformer(model=mock_model)
@@ -34,6 +37,7 @@ class TestVectorColumnOptions(unittest.TestCase):
         # Mock SentenceTransformer
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
+        mock_model.model_card_data = MagicMock(base_model="test-model")
         
         # Create custom index options
         index_options = TableVectorIndexOptions(metric=VectorMetric.COSINE)
@@ -107,9 +111,15 @@ class TestVectorColumnOptions(unittest.TestCase):
     
     def test_to_dict(self):
         # Create test options with all fields set
-        mock_model = MagicMock(spec=SentenceTransformer)
-        mock_model.get_sentence_embedding_dimension.return_value = 768
-        mock_model.model_name = "test-model"
+        # Mock SentenceTransformer
+        mock_model = SentenceTransformer("all-MiniLM-L6-v2")  # Load a lightweight real model
+        mock_model.model_name = "test-model"  # Manually override model_name
+
+        # Create model_card_data attribute
+        class FakeModelCard:
+            base_model = "test-model"
+
+        mock_model.model_card_data = FakeModelCard()
         
         index_options = TableVectorIndexOptions(metric=VectorMetric.COSINE)
         
@@ -122,10 +132,11 @@ class TestVectorColumnOptions(unittest.TestCase):
         # Call to_dict
         result = options.to_dict()
         
+
         # Assertions
         self.assertIsInstance(result, dict)
         self.assertEqual(result["column_name"], "embeddings")
-        self.assertEqual(result["dimension"], 768)
+        self.assertEqual(result["dimension"], 384)
         self.assertEqual(result["type"], "SENTENCE_TRANSFORMER")
         self.assertEqual(result["model"], "test-model")
         self.assertIsNone(result["vector_service_options"])
@@ -223,6 +234,7 @@ class TestVectorColumnOptions(unittest.TestCase):
         # Test invalid parameter types
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
+        mock_model.model_card_data = MagicMock(base_model="test-model")
         
         with self.assertRaises(ValueError):
             # Invalid table_vector_index_options

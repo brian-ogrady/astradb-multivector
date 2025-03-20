@@ -124,8 +124,8 @@ The example shows several ways to search:
 # Execute multiple searches in parallel
 all_results = await table.batch_search_by_text(
     queries=["Describe Captain Ahab", "How does the story begin?"],
-    vector_column=language_options.column_name,
-    limit=max_results
+    vector_columns=[language_options.column_name],
+    candidates_per_column=max_results
 )
 ```
 

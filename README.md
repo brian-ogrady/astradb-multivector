@@ -96,7 +96,10 @@ table = AstraMultiVectorTable(
 table.insert_chunk("This is a sample text to embed and store.")
 
 # Search
-results = table.search_by_text("sample text", limit=5)
+results = table.multi_vector_similarity_search(
+    query_text="sample text", 
+    candidates_per_column=5
+)
 for result in results:
     print(result["content"])
 ```
@@ -402,8 +405,9 @@ Synchronous table operations:
 
 - `insert_chunk()`: Insert a single text chunk with embeddings
 - `bulk_insert_chunks()`: Insert multiple chunks in batches
-- `search_by_text()`: Search for similar text in a vector column
-- `batch_search_by_text()`: Perform multiple searches
+- `multi_vector_similarity_search()`: Search for similar text in one or more vector columns
+- `batch_search_by_text()`: Perform multiple searches in parallel
+- `search_and_rerank()`: Search and rerank results with a reranker model
 
 ### AsyncAstraMultiVectorTable
 
@@ -411,8 +415,9 @@ Asynchronous table operations:
 
 - `insert_chunk()`: Insert a single text chunk asynchronously
 - `bulk_insert_chunks()`: Insert multiple chunks with concurrency control
-- `search_by_text()`: Perform async search for similar text
+- `multi_vector_similarity_search()`: Perform async search across one or more vector columns
 - `batch_search_by_text()`: Execute multiple searches in parallel
+- `search_and_rerank()`: Search and rerank results asynchronously with a reranker model
 - `parallel_process_chunks()`: Process items in parallel with custom function
 
 ## Contributing

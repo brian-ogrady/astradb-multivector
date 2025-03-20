@@ -117,20 +117,20 @@ async def search_example(book_name: str, query: str, max_results: int = 5) -> No
     
     # Search in both vector columns
     print(f"\nSearching for '{query}' in {book_name} using language-specific model:")
-    language_results = await table.search_by_text(
+    language_results = await table.multi_vector_similarity_search(
         query_text=query,
-        vector_column=language_options.column_name,
-        limit=max_results
+        vector_columns=[language_options.column_name],
+        candidates_per_column=max_results
     )
     
     for i, result in enumerate(language_results):
         print(f"{i+1}. {result['content'][:150]}...")
     
     print(f"\nSearching for '{query}' in {book_name} using OpenAI embeddings:")
-    openai_results = await table.search_by_text(
+    openai_results = await table.multi_vector_similarity_search(
         query_text=query,
-        vector_column="openai_embeddings",
-        limit=max_results
+        vector_columns=["openai_embeddings"],
+        candidates_per_column=max_results
     )
     
     for i, result in enumerate(openai_results):
@@ -167,8 +167,8 @@ async def batch_search_example(book_name: str, queries: List[str], max_results: 
     print(f"\nPerforming {len(queries)} searches in {book_name} in parallel:")
     all_results = await table.batch_search_by_text(
         queries=queries,
-        vector_column=language_options.column_name,
-        limit=max_results
+        vector_columns=[language_options.column_name],
+        candidates_per_column=max_results
     )
     
     # Display results for each query

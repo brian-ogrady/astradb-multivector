@@ -3,13 +3,12 @@ from unittest.mock import MagicMock, patch, AsyncMock, call
 import asyncio
 
 from astrapy import AsyncDatabase, AsyncTable
-from astrapy.info import TableVectorIndexOptions
+from astrapy.info import TableVectorIndexOptions, VectorServiceOptions
 from sentence_transformers import SentenceTransformer
 from rerankers import Reranker
 from rerankers.results import RankedResults
 
 from astra_multivector import AsyncAstraMultiVectorTable, VectorColumnOptions
-from astra_multivector.vector_column_options import VectorColumnType
 
 
 class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
@@ -19,23 +18,34 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
         self.mock_db = AsyncMock(spec=AsyncDatabase)
         self.mock_table = AsyncMock(spec=AsyncTable)
         self.mock_db.create_table.return_value = self.mock_table
+
+        self.mock_table.find = AsyncMock(return_value=[])
         
         # Mock the vector column options
         self.mock_model = MagicMock(spec=SentenceTransformer)
         self.mock_model.encode.return_value = [0.1, 0.2, 0.3]
+        self.mock_model.get_sentence_embedding_dimension.return_value = 768
+        mock_card_data = MagicMock()
+        mock_card_data.base_model = "test-model"
+        self.mock_model.model_card_data = mock_card_data
         
         # Create vector options
-        self.vector_options1 = VectorColumnOptions(
-            column_name="embeddings1",
-            dimension=768,
+        self.vector_options1 = VectorColumnOptions.from_sentence_transformer(
             model=self.mock_model,
+            column_name="embeddings1",
             table_vector_index_options=TableVectorIndexOptions()
         )
+
+        self.vector_service_options = VectorServiceOptions(
+            provider="openai",
+            model_name="text-embedding-3-small",
+            authentication={"providerKey": "test-key"}
+        )
         
-        self.vector_options2 = VectorColumnOptions(
+        self.vector_options2 = VectorColumnOptions.from_vectorize(
             column_name="embeddings2",
             dimension=1536,
-            vector_service_options=MagicMock(),
+            vector_service_options=self.vector_service_options,
             table_vector_index_options=TableVectorIndexOptions()
         )
         
@@ -131,7 +141,7 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_to_thread.call_count, 4)
     
     @patch('asyncio.to_thread')
-    async def test_search_by_text(self, mock_to_thread):
+    async def test_multi_vector_similarity_search_single_column(self, mock_to_thread):
         # Mock the to_thread function to return the encoded vector
         mock_to_thread.return_value = [0.1, 0.2, 0.3]
         
@@ -140,68 +150,93 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
         
         # Prepare test
         query_text = "test query"
-        self.mock_table.find.return_value = ["result1", "result2"]
+        mock_results = [{"chunk_id": "id1", "content": "content1", "$similarity": 0.9}]
+        cursor_mock = AsyncMock()
+        cursor_mock.to_list.return_value = mock_results
+        self.mock_table.find.return_value = cursor_mock
         
-        # Call the method with the first embedding column
-        results = await self.table.search_by_text(
+        # Call the method with a single vector column
+        results = await self.table.multi_vector_similarity_search(
             query_text=query_text,
-            vector_column="embeddings1",
-            limit=5
+            vector_columns=["embeddings1"],
+            candidates_per_column=5
         )
         
         # Verify find was called with the correct parameters
         self.mock_table.find.assert_called_with(
             filter={},
             sort={"embeddings1": mock_to_thread.return_value},
-            limit=5
+            limit=5,
+            include_similarity=True
         )
         
-        # Verify the results
-        self.assertEqual(results, ["result1", "result2"])
+        # Reset mock and test with vectorize column
+        cursor_mock = AsyncMock()
+        cursor_mock.to_list.return_value = mock_results
+        self.mock_table.find.return_value = cursor_mock
         
         # Test with the vectorize column (embeddings2)
-        await self.table.search_by_text(
+        await self.table.multi_vector_similarity_search(
             query_text=query_text,
-            vector_column="embeddings2",
-            limit=5
+            vector_columns=["embeddings2"],
+            candidates_per_column=5
         )
         
         # Verify find was called with the raw text for vectorize
         self.mock_table.find.assert_called_with(
             filter={},
             sort={"embeddings2": query_text},
-            limit=5
+            limit=5,
+            include_similarity=True
         )
     
     @patch('asyncio.to_thread')
-    async def test_search_by_text_default_column(self, mock_to_thread):
+    async def test_multi_vector_similarity_search_default_columns(self, mock_to_thread):
         # Mock the to_thread function to return the encoded vector
         mock_to_thread.return_value = [0.1, 0.2, 0.3]
         
         # Ensure the table is initialized
         await self.table._initialize()
         
-        # Test that it uses the first vector column when none is specified
-        query_text = "test query"
-        await self.table.search_by_text(query_text=query_text)
+        # Configure mock cursor results for different columns
+        results1 = [{"chunk_id": "id1", "content": "content1", "$similarity": 0.9}]
+        results2 = [{"chunk_id": "id2", "content": "content2", "$similarity": 0.8}]
         
-        # Verify it used the first column
-        self.mock_table.find.assert_called_with(
-            filter={},
-            sort={"embeddings1": mock_to_thread.return_value},
-            limit=10  # default limit
-        )
+        cursor1 = AsyncMock()
+        cursor1.to_list.return_value = results1
+        cursor2 = AsyncMock()
+        cursor2.to_list.return_value = results2
+        
+        # Setup mock to return different cursors based on column
+        def find_side_effect(**kwargs):
+            sort_column = list(kwargs.get("sort", {}).keys())[0]
+            if sort_column == "embeddings1":
+                return cursor1
+            elif sort_column == "embeddings2":
+                return cursor2
+            return AsyncMock()
+            
+        self.mock_table.find.side_effect = find_side_effect
+        
+        # Call the method without specifying vector columns
+        results = await self.table.multi_vector_similarity_search(query_text="test query")
+        
+        # Verify it searched all columns with default candidates_per_column
+        self.assertEqual(self.mock_table.find.call_count, 2)
+        
+        # Verify results were combined
+        self.assertEqual(len(results), 2)
     
     @patch('asyncio.to_thread')
-    async def test_search_by_text_invalid_column(self, mock_to_thread):
+    async def test_multi_vector_similarity_search_invalid_column(self, mock_to_thread):
         # Ensure the table is initialized
         await self.table._initialize()
         
         # Test with an invalid column name
         with self.assertRaises(ValueError):
-            await self.table.search_by_text(
+            await self.table.multi_vector_similarity_search(
                 query_text="test query",
-                vector_column="non_existent_column"
+                vector_columns=["non_existent_column"]
             )
     
     @patch('asyncio.to_thread')
@@ -280,10 +315,9 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(embedding, text)
         
         # Test with PRECOMPUTED column
-        precomputed_options = VectorColumnOptions(
+        precomputed_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="precomputed",
             dimension=3,
-            type=VectorColumnType.PRECOMPUTED,
             table_vector_index_options=TableVectorIndexOptions()
         )
         
@@ -299,10 +333,9 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
     @patch('asyncio.to_thread')
     async def test_get_embedding_for_column_missing_precomputed(self, mock_to_thread):
         # Test with PRECOMPUTED column but missing embedding
-        precomputed_options = VectorColumnOptions(
+        precomputed_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="precomputed",
             dimension=3,
-            type=VectorColumnType.PRECOMPUTED,
             table_vector_index_options=TableVectorIndexOptions()
         )
         
@@ -464,10 +497,9 @@ class TestAsyncAstraMultiVectorTable(unittest.IsolatedAsyncioTestCase):
         mock_to_thread.return_value = [0.1, 0.2, 0.3]
         
         # Add a precomputed column
-        precomputed_options = VectorColumnOptions(
+        precomputed_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="precomputed",
             dimension=3,
-            type=VectorColumnType.PRECOMPUTED,
             table_vector_index_options=TableVectorIndexOptions()
         )
         self.table.vector_column_options.append(precomputed_options)

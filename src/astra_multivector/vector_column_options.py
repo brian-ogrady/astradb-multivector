@@ -130,12 +130,17 @@ class VectorColumnOptions(BaseModel):
         return instance
     
     def to_dict(self) -> dict:
-        return {
+        model_value = (
+            getattr(self.model, "model_name", None)
+            or getattr(self.model.model_card_data, "base_model", None)
+            if self.model else None
+        )
+        d = {
             "column_name": self.column_name,
             "dimension": self.dimension,
             "type": self._type.name,
-            "model": self.model.model_name if self.model else None,
+            "model": model_value,
             "vector_service_options": self.vector_service_options.as_dict() if self.vector_service_options else None,
             "table_vector_index_options": self.table_vector_index_options.as_dict() if self.table_vector_index_options else None,
         }
-
+        return d

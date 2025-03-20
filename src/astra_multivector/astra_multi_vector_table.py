@@ -176,14 +176,16 @@ class AstraMultiVectorTable:
             self,
             text_chunks: List[str],
             precomputed_embeddings: Optional[Dict[str, List[List[float]]]] = None,
+            batch_size: int = 100,
             **kwargs,
-        ) -> Optional[TableInsertManyResult]:
+        ) -> List[TableInsertManyResult]:
         """Insert multiple text chunks in a single operation.
     
         Args:
             text_chunks: List of text chunks to insert
             precomputed_embeddings: Dictionary mapping column names to lists of embeddings,
                 where each list corresponds to a text chunk at the same index
+            batch_size: Number of text chunks to insert in each batch
             **kwargs: Additional arguments passed directly to the DataAPI's insert_many method.
                 Common options include:
                 - chunk_size: How many rows to include in each API request (default: system-optimized)
@@ -195,35 +197,47 @@ class AstraMultiVectorTable:
             documentation for the insert_many method.
             https://docs.datastax.com/en/astra-api-docs/_attachments/python-client/astrapy/index.html#astrapy.Table.insert_many
         """
+        if not text_chunks:
+            return []
+        
         precomputed_embeddings = precomputed_embeddings or {}
 
-        batch_inserts = []
+        results = []
 
-        for j, text_chunk in enumerate(text_chunks):
-            chunk_id = uuid.uuid4()
-            insertion = {"chunk_id": chunk_id, "content": text_chunk}
+        for i in range(0, len(text_chunks), batch_size):
+            batch = text_chunks[i:i+batch_size]
+            batch_inserts = []
+
+            for batch_idx, text_chunk in enumerate(batch):
+                chunk_id = uuid.uuid4()
+                insertion = {"chunk_id": chunk_id, "content": text_chunk}
+
+                global_idx = i + batch_idx
+                
+                for options in self.vector_column_options:
+                    if options.type == VectorColumnType.VECTORIZE:
+                        insertion[options.column_name] = text_chunk
+                    elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
+                        insertion[options.column_name] = options.model.encode(text_chunk).tolist()
+                    elif options.type == VectorColumnType.PRECOMPUTED:
+                        if options.column_name not in precomputed_embeddings:
+                            raise ValueError(
+                                f"Precomputed embeddings required for column '{options.column_name}' but not provided"
+                            )
+                        column_embeddings = precomputed_embeddings[options.column_name]
+                        if global_idx >= len(column_embeddings):
+                            raise ValueError(
+                                f"Not enough precomputed embeddings provided for column '{options.column_name}'"
+                            )
+                        insertion[options.column_name] = column_embeddings[global_idx]
+                            
+                batch_inserts.append(insertion)
             
-            for options in self.vector_column_options:
-                if options.type == VectorColumnType.VECTORIZE:
-                    insertion[options.column_name] = text_chunk
-                elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
-                    insertion[options.column_name] = options.model.encode(text_chunk).tolist()
-                elif options.type == VectorColumnType.PRECOMPUTED:
-                    if options.column_name not in precomputed_embeddings:
-                        raise ValueError(
-                            f"Precomputed embeddings required for column '{options.column_name}' but not provided"
-                        )
-                    column_embeddings = precomputed_embeddings[options.column_name]
-                    if j >= len(column_embeddings):
-                        raise ValueError(
-                            f"Not enough precomputed embeddings provided for column '{options.column_name}'"
-                        )
-                    insertion[options.column_name] = column_embeddings[j]
-                        
-            batch_inserts.append(insertion)
-    
-        if batch_inserts:
-            return self.table.insert_many(batch_inserts, **kwargs)
+            if batch_inserts:
+                result = self.table.insert_many(batch_inserts, **kwargs)
+                results.append(result)
+
+        return results
     
     def multi_vector_similarity_search(
         self, 
@@ -264,17 +278,20 @@ class AstraMultiVectorTable:
             if options.type == VectorColumnType.VECTORIZE:
                 query = query_text
             elif options.type == VectorColumnType.SENTENCE_TRANSFORMER:
-                query = options.model.encode(query_text).tolist()
+                embedding = options.model.encode(query_text)
+                query = embedding.tolist() if hasattr(embedding, 'tolist') else embedding
             elif options.type == VectorColumnType.PRECOMPUTED:
                 if col not in precomputed_embeddings:
                     raise ValueError(f"Precomputed embedding required for column '{col}'")
                 query = precomputed_embeddings[col]
+
+            kwargs['filter'] = kwargs.get('filter', {})
             
             col_results = self.table.find(
                 sort={col: query},
                 limit=candidates_per_column,
                 include_similarity=True,
-                **kwargs
+                **{k: v for k, v in kwargs.items() if k != 'limit'}
             ).to_list()
             
             for rank, doc in enumerate(col_results):
@@ -332,7 +349,10 @@ class AstraMultiVectorTable:
         ranked_results = reranker.rank(query=query_text, docs=texts, doc_ids=doc_ids)
         
         if limit is not None and limit < len(ranked_results.results):
-            ranked_results.results = ranked_results.results[:limit]
+            ranked_results = RankedResults(
+                query=ranked_results.query,
+                results=ranked_results.results[:limit],
+            )
             
         return ranked_results
     
