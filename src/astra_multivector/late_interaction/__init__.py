@@ -2,7 +2,12 @@ from .models.base import LateInteractionModel
 from .late_interaction_pipeline import LateInteractionPipeline
 from .models.colbert import ColBERTModel
 from .models.colpali import ColPaliModel
-from .utils import expand_parameter, pool_doc_embeddings, pool_query_embeddings
+from .utils import (
+    expand_parameter,
+    pool_doc_embeddings,
+    pool_query_embeddings,
+    PoolingResult,
+)
 
 
 __all__ = [
@@ -13,4 +18,5 @@ __all__ = [
     "expand_parameter",
     "pool_doc_embeddings",
     "pool_query_embeddings",
+    "PoolingResult",
 ]
