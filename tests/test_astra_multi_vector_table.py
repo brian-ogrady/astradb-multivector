@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from astrapy import Database, Table
@@ -8,11 +8,10 @@ from sentence_transformers import SentenceTransformer
 from rerankers import Reranker
 from rerankers.results import RankedResults
 
-from astra_multivector import AstraMultiVectorTable, VectorColumnOptions
+from astra_multivector import AstraMultiVectorTable
 from astra_multivector.vector_column_options import VectorColumnType
 
 
-# Mock classes for testing
 class MockSentenceTransformerOptions:
     """Mock VectorColumnOptions for SENTENCE_TRANSFORMER type.
     
@@ -620,7 +619,7 @@ class TestAstraMultiVectorTable(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.table.batch_search_by_text(
                 queries=["query1", "query2"],
-                precomputed_embeddings=[{"embeddings1": [0.1, 0.2]}]  # Only one embedding for two queries
+                precomputed_embeddings=[{"embeddings1": [0.1, 0.2]}]
             )
 
 

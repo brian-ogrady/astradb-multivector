@@ -5,7 +5,6 @@ Unit tests for late_interaction utility functions.
 
 import unittest
 import torch
-import numpy as np
 
 from astra_multivector.late_interaction import (
     expand_parameter,
@@ -22,24 +21,19 @@ class TestExpandParameter(unittest.TestCase):
         """Test basic parameter expansion functionality."""
         a, b, c = 10, 2, 0.5
         
-        # Test with various inputs
         self.assertEqual(expand_parameter(1, a, b, c), 12)
         self.assertEqual(expand_parameter(10, a, b, c), 41)
         self.assertEqual(expand_parameter(100, a, b, c), 440)
     
     def test_expand_parameter_edge_cases(self):
         """Test parameter expansion with edge cases."""
-        # Test with zero and negative inputs
         self.assertEqual(expand_parameter(0, 10, 2, 0.5), 0)
         self.assertEqual(expand_parameter(-5, 10, 2, 0.5), 0)
         
-        # Test with negative coefficients
         self.assertEqual(expand_parameter(10, -10, 2, 0.5), 21)
 
     def test_expand_parameter_typical_usage(self):
         """Test parameter expansion with values typical for search parameters."""
-        # Values from the late_interaction_pipeline.py
-        # f(1) = 105, f(10) = 171, f(100) = 514, f(500) = 998
         tokens_coef = (94.9, 11.0, -1.48)
         
         self.assertEqual(expand_parameter(1, *tokens_coef), 105)
@@ -47,7 +41,6 @@ class TestExpandParameter(unittest.TestCase):
         self.assertEqual(expand_parameter(100, *tokens_coef), 513)
         self.assertEqual(expand_parameter(500, *tokens_coef), 996)
 
-        # f(1) = 9, f(10) = 20, f(100) = 119, f(900) = 1000
         candidates_coef = (8.82, 1.13, -0.00471)
         
         self.assertEqual(expand_parameter(1, *candidates_coef), 9)
@@ -61,22 +54,19 @@ class TestPoolQueryEmbeddings(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Create 10 embeddings of dimension 4
-        # Make some of them similar to test pooling
         self.embeddings = torch.tensor([
             [1.0, 0.0, 0.0, 0.0],
-            [0.98, 0.1, 0.1, 0.1],  # Similar to first
-            [0.96, 0.2, 0.1, 0.1],  # Similar to first
+            [0.98, 0.1, 0.1, 0.1],
+            [0.96, 0.2, 0.1, 0.1],
             [0.0, 1.0, 0.0, 0.0],
-            [0.1, 0.98, 0.1, 0.1],  # Similar to fourth
+            [0.1, 0.98, 0.1, 0.1],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
-            [0.2, 0.2, 0.2, 0.9],   # Similar to seventh
+            [0.2, 0.2, 0.2, 0.9],
             [0.5, 0.5, 0.5, 0.5],
-            [0.4, 0.6, 0.4, 0.4],   # Somewhat similar to ninth
+            [0.4, 0.6, 0.4, 0.4],
         ], dtype=torch.float32)
         
-        # Normalize embeddings
         self.embeddings = self.embeddings / torch.norm(self.embeddings, dim=1, keepdim=True)
     
     def test_pool_query_embeddings_disabled(self):
@@ -161,7 +151,7 @@ class TestPoolQueryEmbeddings(unittest.TestCase):
         """
         result = pool_query_embeddings(
             self.embeddings, 
-            max_distance=0.5,  # High distance would normally pool many embeddings
+            max_distance=0.5,
             min_clusters=self.embeddings.shape[0],
             return_cluster_info=True
         )
@@ -206,7 +196,7 @@ class TestPoolQueryEmbeddings(unittest.TestCase):
         result2 = pool_query_embeddings(
             small_embeddings, 
             max_distance=0.1,
-            min_clusters=3,  # More than input size
+            min_clusters=3,
             return_cluster_info=True
         )
         
@@ -219,20 +209,15 @@ class TestPoolDocEmbeddings(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Create document embeddings: tensor of size [50, 4]
         self.doc_embeddings = torch.randn(50, 4)
-        # Normalize embeddings
         self.doc_embeddings = self.doc_embeddings / torch.norm(self.doc_embeddings, dim=1, keepdim=True)
         
-        # Create list of document embeddings
         self.doc_list = [
-            torch.randn(30, 4),  # First document: 30 tokens
-            torch.randn(20, 4),  # Second document: 20 tokens
+            torch.randn(30, 4),
+            torch.randn(20, 4),
         ]
-        # Normalize embeddings in list
         self.doc_list = [d / torch.norm(d, dim=1, keepdim=True) for d in self.doc_list]
         
-        # Create document with protected tokens
         self.doc_with_important = torch.randn(40, 4)
         self.doc_with_important = self.doc_with_important / torch.norm(self.doc_with_important, dim=1, keepdim=True)
     
@@ -307,7 +292,6 @@ class TestPoolDocEmbeddings(unittest.TestCase):
            - Includes document-specific compression ratios
            - Provides aggregate statistics across all documents
         """
-        # Single document case
         result = pool_doc_embeddings(self.doc_embeddings, pool_factor=2, return_stats=True)
         
         self.assertIsInstance(result, PoolingResult)
@@ -323,7 +307,6 @@ class TestPoolDocEmbeddings(unittest.TestCase):
         self.assertEqual(result.stats['pooled_tokens'], result.embeddings.shape[0])
         self.assertTrue(result.stats['pooling_applied'])
         
-        # List of documents case
         result_list = pool_doc_embeddings(self.doc_list, pool_factor=2, return_stats=True)
         
         self.assertIsInstance(result_list, PoolingResult)
@@ -423,7 +406,6 @@ class TestPoolDocEmbeddings(unittest.TestCase):
         if pooled_min.stats['pooling_applied']:
             self.assertGreaterEqual(pooled_min.embeddings.shape[0], high_min_tokens)
         else:
-            # If pooling was prevented, should return original
             self.assertEqual(pooled_min.embeddings.shape[0], self.doc_embeddings.shape[0])
     
     def test_pool_doc_embeddings_invalid_inputs(self):
@@ -456,7 +438,7 @@ class TestPoolDocEmbeddings(unittest.TestCase):
         result2 = pool_doc_embeddings(
             small_doc, 
             pool_factor=2,
-            min_tokens=4,  # More than input size
+            min_tokens=4,
             return_stats=True
         )
         

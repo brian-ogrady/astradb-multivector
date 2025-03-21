@@ -75,7 +75,7 @@ class LateInteractionModel(ABC):
             return "auto"
         elif torch.cuda.is_available():
             return "cuda"
-        elif hasattr(torch, 'has_mps') and torch.has_mps and torch.backends.mps.is_available():
+        elif torch.backends.mps.is_available():
             return "mps"
         else:
             return "cpu"
@@ -94,12 +94,25 @@ class LateInteractionModel(ABC):
         Returns:
             A tensor of similarity scores for each document.
         """
+        if not D:
+            raise RuntimeError("Empty document list provided to score method")
+
         Q = self.to_device(Q.unsqueeze(0))
         D = [self.to_device(d.to(Q.dtype)) for d in D]
         
         D_padded = torch.nn.utils.rnn.pad_sequence(D, batch_first=True, padding_value=0)
         
-        scores = torch.einsum("bnd,csd->bcns", Q, D_padded).max(dim=3)[0].sum(dim=2)
+        Q_norms = torch.norm(Q, dim=2, keepdim=True)
+        D_norms = torch.norm(D_padded, dim=2, keepdim=True)
+        
+        safe_Q = torch.where(Q_norms > 0, Q / Q_norms, torch.zeros_like(Q))
+        safe_D = torch.where(D_norms > 0, D_padded / D_norms, torch.zeros_like(D_padded))
+        
+        similarities = torch.einsum("bnd,csd->bcns", safe_Q, safe_D)
+        
+        max_similarities, _ = similarities.max(dim=3)
+        
+        scores = max_similarities.sum(dim=2)
         
         return scores.squeeze(0).to(torch.float32)
     
