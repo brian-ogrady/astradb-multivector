@@ -13,7 +13,7 @@ python -m unittest tests/test_async_astra_multi_vector_table.py
 # Late interaction tests
 python -m unittest tests/late_interaction/test_utils.py
 python -m unittest tests/late_interaction/models/test_base.py
-#python -m unittest tests/late_interaction/models/test_colbert.py
+python -m unittest tests/late_interaction/models/test_colbert.py
 #python -m unittest tests/late_interaction/models/test_colpali.py
 #python -m unittest tests/late_interaction/test_late_interaction_pipeline.py
 

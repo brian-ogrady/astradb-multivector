@@ -16,6 +16,9 @@ class ColBERTModel(LateInteractionModel):
     ColBERT implementation of the LateInteractionModel interface.
     
     Uses the ColBERT neural IR model for token-level late interaction retrieval.
+    ColBERT provides dense retrieval with fine-grained token-level interactions
+    between query and document tokens at search time, offering high precision
+    while maintaining efficiency.
     """
     
     def __init__(
@@ -29,9 +32,12 @@ class ColBERTModel(LateInteractionModel):
         Initialize a ColBERT model.
         
         Args:
-            model_name: HuggingFace model name or path to local checkpoint
-            tokens_per_query: Maximum number of tokens per query
-            max_doc_tokens: Maximum number of tokens per document
+            model_name: HuggingFace model name or path to local checkpoint.
+                       Default is 'answerdotai/answerai-colbert-small-v1'.
+            tokens_per_query: Maximum number of tokens per query.
+                             Default is 32 tokens.
+            max_doc_tokens: Maximum number of tokens per document.
+                          Default is 512 tokens.
             device: Device to run the model on ('cpu', 'cuda', 'cuda:0', etc.)
                    If None, will use CUDA if available, otherwise CPU.
         """
@@ -56,7 +62,7 @@ class ColBERTModel(LateInteractionModel):
             self.checkpoint.model = self.checkpoint.model.to(self._device)
         except RuntimeError as e:
             warnings.warn(f"Could not move model to {self._device}: {e}."
-                          f"Use {self._get_module_device(self.checkpoint)} instead.")
+                          f"Use {self._get_actual_device(self.checkpoint)} instead.")
                 
         self.encoder = CollectionEncoder(self.config, self.checkpoint)
         
@@ -64,7 +70,10 @@ class ColBERTModel(LateInteractionModel):
     
     async def encode_query(self, q: str) -> torch.Tensor:
         """
-        Encode a query string into token embeddings.
+        Encode a query string into token embeddings asynchronously.
+        
+        Offloads the synchronous encoding work to a separate thread to avoid
+        blocking the event loop.
         
         Args:
             q: The query string to encode
@@ -76,7 +85,18 @@ class ColBERTModel(LateInteractionModel):
         return await asyncio.to_thread(self.encode_query_sync, q)
     
     def encode_query_sync(self, q: str) -> torch.Tensor:
-        """Synchronous version of encode_query"""
+        """
+        Encode a query string into token embeddings synchronously.
+        
+        For empty queries, returns an empty tensor with the correct embedding dimension.
+        For non-empty queries, uses the ColBERT queryFromText method to generate embeddings.
+        
+        Args:
+            q: The query string to encode
+            
+        Returns:
+            Query token embeddings tensor of shape (num_tokens, embedding_dim)
+        """
         if not q.strip():
             return torch.zeros((0, self.dim), device=self._device)
             
@@ -84,13 +104,20 @@ class ColBERTModel(LateInteractionModel):
     
     async def encode_doc(self, chunks: List[Union[str, Image]]) -> List[torch.Tensor]:
         """
-        Encode document chunks into token embeddings.
+        Encode document chunks into token embeddings asynchronously.
+        
+        Offloads the synchronous encoding work to a separate thread to avoid
+        blocking the event loop. Validates that all inputs are text chunks
+        since ColBERT doesn't support image inputs.
         
         Args:
             chunks: List of text chunks to encode
             
         Returns:
             List of token embedding tensors, one per chunk
+            
+        Raises:
+            TypeError: If any chunk is not a string
         """
         if not chunks:
             return []
@@ -102,13 +129,25 @@ class ColBERTModel(LateInteractionModel):
     
     def encode_doc_sync(self, chunks: List[str]) -> List[torch.Tensor]:
         """
-        Synchronous version of encode_doc
+        Encode document chunks into token embeddings synchronously.
+        
+        Handles various edge cases including:
+        - Empty chunk list
+        - Individual empty chunks
+        - Documents exceeding token limits
+        
+        For empty chunks, returns empty tensors with the correct embedding dimension.
+        Applies attention masking to only include relevant tokens in the output.
         
         Args:
             chunks: List of text chunks to encode
             
         Returns:
             List of token embedding tensors, one per chunk
+            
+        Warnings:
+            - When chunks are empty
+            - When documents exceed token limits and are truncated
         """
         if not chunks:
             return []
@@ -156,20 +195,44 @@ class ColBERTModel(LateInteractionModel):
         return result_embeddings
     
     def to_device(self, T: torch.Tensor) -> torch.Tensor:
-        """Move tensor to the device used by this model"""
-        return T.to(self._get_module_device(self.checkpoint))
+        """
+        Move tensor to the device used by this model.
+        
+        Args:
+            T: Tensor to move to the model's device
+            
+        Returns:
+            Tensor on the model's device
+        """
+        return T.to(self._get_actual_device(self.checkpoint))
     
     @property
     def dim(self) -> int:
-        """Return the embedding dimension"""
+        """
+        Get the embedding dimension of the model.
+        
+        Returns:
+            Embedding dimension as an integer
+        """
         return self._embedding_dim
     
     @property
     def model_name(self) -> str:
-        """Return the model name"""
+        """
+        Get the name of the model.
+        
+        Returns:
+            Model name as a string
+        """
         return self._model_name
     
     def __str__(self):
+        """
+        Get a string representation of the model.
+        
+        Returns:
+            String describing the model configuration
+        """
         return (
             f"ColBERTModel(model={self.model_name}, "
             f"dim={self.dim}, "
