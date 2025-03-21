@@ -362,6 +362,9 @@ class AsyncAstraMultiVectorTable:
         Returns:
             A tuple of (column_name, search_results) with the column's search results
         """
+        candidates_per_column = kwargs.pop("limit", candidates_per_column)
+        filter_params = kwargs.pop("filter", {})
+
         options = next(opt for opt in self.vector_column_options if opt.column_name == column_name)
         
         query = await self._get_embedding_for_column(
@@ -371,6 +374,7 @@ class AsyncAstraMultiVectorTable:
         )
         
         cursor = self.table.find(
+            filter=filter_params,
             sort={column_name: query},
             limit=candidates_per_column,
             include_similarity=True,
@@ -383,7 +387,7 @@ class AsyncAstraMultiVectorTable:
     async def multi_vector_similarity_search(
         self, 
         query_text: str,
-        vector_columns: Optional[List[str]] = None,
+        vector_columns: Optional[Union[str, List[str]]] = None,
         precomputed_embeddings: Optional[Dict[str, List[float]]] = None,
         candidates_per_column: int = 10,
         **kwargs
@@ -406,7 +410,11 @@ class AsyncAstraMultiVectorTable:
             
         precomputed_embeddings = precomputed_embeddings or {}
 
-        vector_columns = vector_columns or [opt.column_name for opt in self.vector_column_options]
+        if isinstance(vector_columns, str):
+            vector_columns = [vector_columns]
+        
+        if vector_columns is None:
+            vector_columns = [opt.column_name for opt in self.vector_column_options]
         
         for col in vector_columns:
             if not any(opt.column_name == col for opt in self.vector_column_options):
@@ -634,7 +642,7 @@ class AsyncAstraMultiVectorTable:
     async def batch_search_by_text(
         self,
         queries: List[str],
-        vector_columns: Optional[List[str]] = None,
+        vector_columns: Optional[Union[str, List[str]]] = None,
         precomputed_embeddings: Optional[List[Dict[str, List[float]]]] = None,
         candidates_per_column: int = 10,
         rerank: bool = False,
@@ -669,6 +677,9 @@ class AsyncAstraMultiVectorTable:
         """
         if not self._initialized:
             await self._initialize()
+
+        if isinstance(vector_columns, str):
+            vector_columns = [vector_columns]
             
         if rerank and not reranker:
             raise ValueError("reranker must be provided when rerank=True")
