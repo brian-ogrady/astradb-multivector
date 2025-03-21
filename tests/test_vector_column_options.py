@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from astrapy.constants import VectorMetric
 from astrapy.info import TableVectorIndexOptions, VectorServiceOptions
@@ -135,8 +135,8 @@ class TestVectorColumnOptions(unittest.TestCase):
         - Nested objects like table_vector_index_options are also serialized
         - Tests with multiple types of VectorColumnOptions
         """
-        mock_model = SentenceTransformer("all-MiniLM-L6-v2")  # Load a lightweight real model
-        mock_model.model_name = "test-model"  # Manually override model_name
+        mock_model = SentenceTransformer("all-MiniLM-L6-v2")
+        mock_model.model_name = "test-model"
 
         class FakeModelCard:
             base_model = "test-model"
@@ -162,7 +162,6 @@ class TestVectorColumnOptions(unittest.TestCase):
         self.assertIsInstance(result["table_vector_index_options"], dict)
         self.assertEqual(result["table_vector_index_options"]["metric"], "cosine")
         
-        # Test with vectorize options
         vector_options = VectorServiceOptions(
             provider="openai",
             model_name="text-embedding-3-small",
@@ -183,7 +182,6 @@ class TestVectorColumnOptions(unittest.TestCase):
         self.assertIsInstance(result["vector_service_options"], dict)
         self.assertEqual(result["vector_service_options"]["provider"], "openai")
         
-        # Test with minimal options
         minimal_options = VectorColumnOptions.from_precomputed_embeddings(
             column_name="minimal",
             dimension=512
@@ -242,34 +240,28 @@ class TestVectorColumnOptions(unittest.TestCase):
         - Tests all factory methods for proper validation
         """
         with self.assertRaises(TypeError):
-            # Missing column_name
             VectorColumnOptions.from_precomputed_embeddings(dimension=512)
         
         with self.assertRaises(TypeError):
-            # Missing dimension
             VectorColumnOptions.from_precomputed_embeddings(column_name="test")
         
         with self.assertRaises(TypeError):
-            # Missing model
             VectorColumnOptions.from_sentence_transformer(column_name="test")
         
         with self.assertRaises(TypeError):
-            # Missing vector_service_options
             VectorColumnOptions.from_vectorize(
                 column_name="test",
                 dimension=512
             )
         
-        # Test invalid parameter types
         mock_model = MagicMock(spec=SentenceTransformer)
         mock_model.get_sentence_embedding_dimension.return_value = 768
         mock_model.model_card_data = MagicMock(base_model="test-model")
         
         with self.assertRaises(ValueError):
-            # Invalid table_vector_index_options
             VectorColumnOptions.from_sentence_transformer(
                 model=mock_model,
-                table_vector_index_options="invalid"  # Should be TableVectorIndexOptions
+                table_vector_index_options="invalid"
             )
     
     def test_model_config(self):
