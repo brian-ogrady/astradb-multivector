@@ -73,7 +73,7 @@ class ColPaliModel(LateInteractionModel):
     def encode_query_sync(self, q: str) -> torch.Tensor:
         """Synchronous version of encode_query"""
         if not q.strip():
-            return torch.zeros((0, self.dim), device=self._get_module_device(self.colpali))
+            return torch.zeros((0, self.dim), device=self._get_actual_device(self.colpali))
 
         with torch.no_grad():
             batch = self.processor.process_queries([q])
@@ -117,7 +117,7 @@ class ColPaliModel(LateInteractionModel):
         
         if not valid_images:
             logger.warning("All images are invalid. Returning empty embeddings.")
-            return [torch.zeros((0, self.dim), device=self._get_module_device(self.colpali)) 
+            return [torch.zeros((0, self.dim), device=self._get_actual_device(self.colpali)) 
                     for _ in range(len(images))]
 
         with torch.no_grad():
@@ -136,7 +136,7 @@ class ColPaliModel(LateInteractionModel):
                 valid_idx += 1
             else:
                 result_embeddings.append(torch.zeros((0, self.dim), 
-                                                    device=self._get_module_device(self.colpali)))
+                                                    device=self._get_actual_device(self.colpali)))
         
         return result_embeddings
     
@@ -157,7 +157,7 @@ class ColPaliModel(LateInteractionModel):
             return None
             
         if isinstance(T, torch.Tensor):
-            return T.to(self._get_module_device(self.colpali))
+            return T.to(self._get_actual_device(self.colpali))
             
         if isinstance(T, dict):
             return {k: self.to_device(v) for k, v in T.items()}
