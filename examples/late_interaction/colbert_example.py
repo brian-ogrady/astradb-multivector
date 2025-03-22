@@ -25,7 +25,13 @@ from astrapy import DataAPIClient
 from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
 
 
-# Sample documents for indexing
+"""
+Sample documents for indexing.
+
+A collection of structured documents with content and metadata fields
+including source, topic, and category. Used to demonstrate indexing
+and retrieval capabilities with metadata.
+"""
 SAMPLE_DOCUMENTS = [
     {
         "content": "AstraDB is a vector database that enables developers to build AI applications with vector search.",
@@ -79,12 +85,11 @@ async def setup_pipeline() -> LateInteractionPipeline:
     db = db_client.get_async_database(api_endpoint=astra_api_endpoint)
     
     # Create a ColBERT model
-    # You can choose different models like colbert-ir/colbertv2.0, 
+    # Available model options include: colbert-ir/colbertv2.0,
     # stanford-crfm/colbert-ir-v2, or answerdotai/answerai-colbert-small-v1
     model = ColBERTModel(
         model_name="answerdotai/answerai-colbert-small-v1",
-        # Use 'cuda' if you have a GPU available
-        device="cpu"  
+        device="cpu"  # Use 'cuda' if you have a GPU available
     )
     
     # Create pipeline with customized parameters
@@ -92,12 +97,9 @@ async def setup_pipeline() -> LateInteractionPipeline:
         db=db,
         model=model,
         base_table_name="colbert_example",
-        # Doc pooling reduces token count by this factor (None to disable)
-        doc_pool_factor=2,  
-        # Query pooling combines tokens within this cosine distance (0 to disable)
-        query_pool_distance=0.03,
-        # Default concurrency for async operations
-        default_concurrency_limit=5,
+        doc_pool_factor=2,         # Doc pooling reduces token count by this factor (None to disable)
+        query_pool_distance=0.03,  # Query pooling combines tokens within this cosine distance (0 to disable)
+        default_concurrency_limit=5,  # Default concurrency for async operations
     )
     
     # Initialize the tables
@@ -175,17 +177,15 @@ async def perform_searches(pipeline: LateInteractionPipeline):
     results = await pipeline.search(
         query=query,
         k=3,
-        # Number of tokens to retrieve per query token
-        n_ann_tokens=200,
-        # Number of document candidates for MaxSim scoring
-        n_maxsim_candidates=20
+        n_ann_tokens=200,        # Number of tokens to retrieve per query token
+        n_maxsim_candidates=20   # Number of document candidates for MaxSim scoring
     )
     
     print(f"\nAdvanced search results for '{query}':")
     for i, (doc_id, score, content) in enumerate(results):
         print(f"{i+1}. Score: {score:.4f}")
-        print(f"   Content: {content}")
-        # You can also use document ID to fetch complete document
+        print(f"   Content: {content}") 
+        # Note: You can use document ID to fetch complete document with additional fields
 
 
 async def main():

@@ -203,7 +203,7 @@ class LateInteractionPipeline:
         remaining_keys = valid_columns - set(insertion.keys())
         
         for key in remaining_keys:
-            if key in valid_columns:
+            if key in document_row:
                 insertion[key] = document_row[key]
             else:
                 logger.warning(f"Field '{key}' is not defined in the table schema and will be ignored")
@@ -484,16 +484,16 @@ class LateInteractionPipeline:
         Returns:
         List of tuples with (doc_id, score, content) for top k documents, sorted by relevance score
         in descending order.
+        
+        TODO: Future enhancement - When metadata indexing is supported by the Data API:
+        1. Implement efficient metadata filtering at query time
+        2. Pass filter_condition to search operations
+        3. Create a metadata index table for common query patterns
+        4. Consider hybrid retrieval that combines vector and metadata filtering
         """
         
         if not self._initialized:
             await self.initialize()
-        
-        # TODO: Future enhancement - When metadata indexing is supported by the Data API:
-        # 1. Implement efficient metadata filtering at query time
-        # 2. Pass filter_condition to search operations
-        # 3. Create a metadata index table for common query patterns
-        # 4. Consider hybrid retrieval that combines vector and metadata filtering
             
         if n_ann_tokens is None:
             n_ann_tokens = expand_parameter(k, 94.9, 11.0, -1.48)
@@ -548,9 +548,7 @@ class LateInteractionPipeline:
         logger.debug(f"Running ANN search for {len(Q_np)} query tokens")
 
         required_projection = {"token_embedding": True, "doc_id": True}
-
         user_projection = kwargs.pop("projection", {})
-
         merged_projection = {**user_projection, **required_projection}
 
         token_search_tasks = [
