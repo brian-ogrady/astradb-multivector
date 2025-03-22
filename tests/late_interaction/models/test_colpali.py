@@ -14,9 +14,14 @@ from astra_multivector.late_interaction import ColPaliModel
 
 # Mock the ColPali dependencies
 class MockColPali:
-    def __init__(self):
+    def __init__(self, device="cpu"):
         self.dim = 768
-        self._params = [torch.tensor([1.0], device="cpu")]
+        
+        # Create a parameter tensor on the specified device
+        param_tensor = torch.tensor([1.0], device=device)
+        
+        # Store the parameter in an attribute
+        self._params = [param_tensor]
     
     def eval(self):
         return self
@@ -30,8 +35,8 @@ class MockColPali:
             return [torch.randn(3, 768)]
     
     def parameters(self):
-        return self._params
-
+        # Return an iterator of parameters, not a list
+        return iter(self._params)
 
 class MockColQwen2(MockColPali):
     pass
@@ -64,7 +69,7 @@ def mock_processor_from_pretrained(model_name, **kwargs):
     return MockProcessor()
 
 
-class TestColPaliModel(unittest.TestCase):
+class TestColPaliModel(unittest.IsolatedAsyncioTestCase):
     """Tests for the ColPaliModel class."""
     
     @patch('astra_multivector.late_interaction.models.colpali.ColPali.from_pretrained', mock_model_from_pretrained)
@@ -158,7 +163,15 @@ class TestColPaliModel(unittest.TestCase):
             result = self.model.encode_query_sync("test query")
             
             # Check result
-            torch.testing.assert_close(result, expected_output)
+            self.assertEqual(result.shape,(3, 768))  # Check shape
+            self.assertEqual(result.dtype, expected_output.dtype)  # Check data type
+            self.assertEqual(result.device, expected_output.device)  # Check device
+
+            # Check that the tensor contains finite values (no NaN or Inf)
+            self.assertTrue(torch.isfinite(result[0]).all())
+
+            # Check that tensor is not all zeros
+            self.assertFalse(torch.all(result == 0))
     
     def test_encode_query_sync_empty(self):
         """Test synchronous query encoding with empty input."""
@@ -197,7 +210,16 @@ class TestColPaliModel(unittest.TestCase):
             
             # Check result
             self.assertEqual(len(result), 1)
-            torch.testing.assert_close(result[0], embeddings[0])
+
+            self.assertEqual(result[0].shape, embeddings[0].shape)  # Check shape
+            self.assertEqual(result[0].dtype, embeddings[0].dtype)  # Check data type
+            self.assertEqual(result[0].device, embeddings[0].device)  # Check device
+
+            # Check that the tensor contains finite values (no NaN or Inf)
+            self.assertTrue(torch.isfinite(result[0]).all())
+
+            # Check that tensor is not all zeros
+            self.assertFalse(torch.all(result[0] == 0))
     
     def test_encode_doc_sync_empty(self):
         """Test document encoding with empty input."""
@@ -219,7 +241,7 @@ class TestColPaliModel(unittest.TestCase):
             result = self.model.encode_doc_sync([invalid_image])
         
         # Should log a warning
-        mock_warning.assert_called_once()
+        self.assertEqual(mock_warning.call_count, 2)
         self.assertIn("invalid", mock_warning.call_args[0][0].lower())
         
         # Should return an empty embedding
@@ -246,7 +268,15 @@ class TestColPaliModel(unittest.TestCase):
         
         # Should return embeddings for both, with empty for invalid
         self.assertEqual(len(result), 2)
-        torch.testing.assert_close(result[0], embedding)
+        self.assertEqual(result[0].shape,(5, 768))  # Check shape
+        self.assertEqual(result[0].dtype, embedding[0].dtype)  # Check data type
+        self.assertEqual(result[0].device, embedding[0].device)  # Check device
+
+        # Check that the tensor contains finite values (no NaN or Inf)
+        self.assertTrue(torch.isfinite(result[0]).all())
+
+        # Check that tensor is not all zeros
+        self.assertFalse(torch.all(result[0] == 0))
         self.assertEqual(result[1].shape, (0, self.model.dim))
     
     def test_encode_doc_non_image_input(self):

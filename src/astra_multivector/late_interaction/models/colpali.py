@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Optional, Union
 
 import torch
 from PIL.Image import Image
@@ -109,6 +109,8 @@ class ColPaliModel(LateInteractionModel):
         valid_indices = []
         
         for i, img in enumerate(images):
+            if not isinstance(img, Image):
+                raise TypeError(f"ColPali only supports image chunks, got {type(img).__name__}")
             if img.width > 0 and img.height > 0:
                 valid_images.append(img)
                 valid_indices.append(i)
