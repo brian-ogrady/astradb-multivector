@@ -27,7 +27,12 @@ from reranker import Reranker
 from astra_multivector import AsyncAstraMultiVectorTable, VectorColumnOptions
 
 
-# Sample documents for demonstration
+"""
+Sample documents for demonstration.
+
+A collection of text chunks about machine learning, vector databases,
+and related concepts for use in vector search examples.
+"""
 SAMPLE_DOCUMENTS = [
     "Neural networks are a set of algorithms, modeled loosely after the human brain, that are designed to recognize patterns.",
     "Transformers have become the dominant architecture for natural language processing tasks, replacing recurrent neural networks.",
