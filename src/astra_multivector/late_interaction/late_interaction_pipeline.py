@@ -8,7 +8,8 @@ import numpy as np
 import torch
 from PIL.Image import Image
 from astrapy import AsyncDatabase, AsyncTable
-from astrapy.constants import VectorMetric
+from astrapy.constants import SortMode, VectorMetric
+from astrapy.cursors import AsyncTableFindCursor
 from astrapy.info import (
     ColumnType,
     CreateTableDefinition,
@@ -140,6 +141,7 @@ class LateInteractionPipeline:
             .add_column("token_id", ColumnType.UUID)
             .add_vector_column(token_column_name, dimension=self.model.dim)
             .add_partition_by(["doc_id"])
+            .add_partition_sort({"token_id": SortMode.ASCENDING})
         ).build()
         
         logger.debug(f"Creating token table: {self.token_table_name} with dimension {self.model.dim}")
@@ -163,7 +165,20 @@ class LateInteractionPipeline:
         
         return token_table
     
-    def _validate_row(self, document_row: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    async def async_find(table: AsyncTable, **kwargs) -> AsyncTableFindCursor:
+        """
+        Find documents in the table asynchronously.
+        
+        Args:
+            table: The table to search
+            **kwargs: Additional keyword arguments to pass to the find method
+        """
+        cursor: AsyncTableFindCursor = table.find(**kwargs)
+
+        return cursor
+    
+    async def _validate_row(self, document_row: Dict[str, Any]) -> Dict[str, Any]:
         """
         Validate and prepare a document row for insertion.
         
@@ -197,8 +212,8 @@ class LateInteractionPipeline:
             if self.model.supports_images:
                 insertion["content_type"] = "text"
 
-        table_definition = self._doc_table.definition()
-        valid_columns = {col.name for col in table_definition.columns}
+        table_definition = await self._doc_table.definition()
+        valid_columns = {col for col in table_definition.columns}
 
         remaining_keys = valid_columns - set(insertion.keys())
         
@@ -233,7 +248,7 @@ class LateInteractionPipeline:
             await self.initialize()
         
         logger.debug("Validating document row")
-        validated = self._validate_row(document_row)
+        validated = await self._validate_row(document_row)
         doc_id = validated["doc_id"]
         content = validated["original_content"]
         insertion = validated["validated_insertion"]
@@ -244,7 +259,7 @@ class LateInteractionPipeline:
             
             logger.debug(f"Encoding document {doc_id}")
             doc_embeddings = await self.model.encode_doc([content])
-            
+
             if self.doc_pool_factor and self.doc_pool_factor > 1:
                 logger.debug(f"Pooling document embeddings with factor {self.doc_pool_factor}")
                 doc_embeddings = pool_doc_embeddings(doc_embeddings, self.doc_pool_factor)
@@ -265,7 +280,7 @@ class LateInteractionPipeline:
         self, 
         doc_ids: Union[uuid.UUID, List[uuid.UUID]], 
         embeddings: Union[torch.Tensor, List[torch.Tensor]],
-        db_concurrency: int = 10,
+        db_concurrency: int = None,
         **kwargs,
     ) -> List[List[uuid.UUID]]:
         """
@@ -301,7 +316,6 @@ class LateInteractionPipeline:
                                 f"Expected {self.model.dim}, got {embedding.shape[1]}")
         
         logger.debug(f"Indexing token embeddings for {len(doc_ids)} documents")
-        
         all_token_ids = []
         all_insertions = []
         
@@ -322,13 +336,14 @@ class LateInteractionPipeline:
                 all_insertions.append(insertion)
             
             all_token_ids.append(doc_token_ids)
-        
+                
         logger.debug(f"Bulk inserting {len(all_insertions)} token embeddings with db_concurrency={db_concurrency}")
         try:
-            await self._token_table.insert_many(
+            result = await self._token_table.insert_many(
                 all_insertions,
                 ordered=False,
-                concurrency=db_concurrency,
+                concurrency=5,
+                chunk_size=5,
                 **kwargs,
             )
             logger.debug(f"Completed token embeddings indexing for {len(doc_ids)} documents")
@@ -382,7 +397,7 @@ class LateInteractionPipeline:
             batch_doc_ids = []
             
             for row in batch_rows:
-                validated = self._validate_row(row)
+                validated = await self._validate_row(row)
                 validated_rows.append(validated["validated_insertion"])
                 batch_contents.append(validated["original_content"])
                 batch_doc_ids.append(validated["doc_id"])
@@ -552,7 +567,8 @@ class LateInteractionPipeline:
         merged_projection = {**user_projection, **required_projection}
 
         token_search_tasks = [
-            self._token_table.find(
+            self.async_find(
+                self._token_table,
                 sort={
                     "token_embedding": token_embedding.tolist()
                 },
@@ -617,13 +633,14 @@ class LateInteractionPipeline:
             
             logger.debug(f"Fetching content for {len(top_k)} top documents")
             doc_ids_str = [str(doc_id) for doc_id, _ in top_k]
-            cursor = await self._doc_table.find(
+            cursor = await self.async_find(
+                self._doc_table,
                 filter={"doc_id": {"$in": doc_ids_str}}
             )
             docs = await cursor.to_list()
             
             logger.debug(f"Building final result set with {len(docs)} documents")
-            doc_map = {uuid.UUID(doc["doc_id"]): doc for doc in docs}
+            doc_map = {doc["doc_id"]: doc for doc in docs}
                 
             results = [(doc_id, score, doc_map.get(doc_id, {}).get("content", "")) 
                     for doc_id, score in top_k]
@@ -688,7 +705,8 @@ class LateInteractionPipeline:
             Token embeddings tensor for the document
         """
         logger.debug(f"Fetching token embeddings for document {doc_id}")
-        cursor = await self._token_table.find(
+        cursor = await self.async_find(
+            self._token_table,
             filter={"doc_id": doc_id},
             projection={"token_embedding": True, "token_id": True}
         )

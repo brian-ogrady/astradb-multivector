@@ -1,10 +1,13 @@
 import asyncio
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 
 import torch
 from PIL.Image import Image
 from colpali_engine.models import ColPali, ColPaliProcessor, ColQwen2, ColQwen2Processor
+from colpali_engine.utils.processing_utils import BaseVisualRetrieverProcessor
+from transformers import BatchFeature
+from transformers.modeling_utils import PreTrainedModel
 
 from astra_multivector.late_interaction import LateInteractionModel
 
@@ -41,7 +44,7 @@ class ColPaliModel(LateInteractionModel):
         """
         super().__init__(device=device)
 
-        self._model_name = model_name
+        self._model_name: str = model_name
         
         if 'qwen' in model_name:
             model_cls = ColQwen2
@@ -51,20 +54,20 @@ class ColPaliModel(LateInteractionModel):
             processor_cls = ColPaliProcessor
 
         try:
-            self.colpali = model_cls.from_pretrained(
+            self.colpali: PreTrainedModel = model_cls.from_pretrained(
                 model_name,
                 torch_dtype=torch.bfloat16,
                 device_map=self._device,
             ).eval()
         except RuntimeError as e:
             logger.warning(f"Could not load model on {self._device}: {e}")
-            self.colpali = model_cls.from_pretrained(
+            self.colpali: PreTrainedModel = model_cls.from_pretrained(
                 model_name,
                 torch_dtype=torch.bfloat16,
                 device_map="auto",
             ).eval()
         
-        self.processor = processor_cls.from_pretrained(model_name)
+        self.processor: BaseVisualRetrieverProcessor = processor_cls.from_pretrained(model_name)
     
     async def encode_query(self, q: str) -> torch.Tensor:
         """
@@ -100,9 +103,9 @@ class ColPaliModel(LateInteractionModel):
             return torch.zeros((0, self.dim), device=self._get_actual_device(self.colpali))
 
         with torch.no_grad():
-            batch = self.processor.process_queries([q])
-            batch = {k: self.to_device(v) for k, v in batch.items()}
-            embeddings = self.colpali(**batch)
+            batch: BatchFeature = self.processor.process_queries([q])
+            batch: Dict[str, torch.Tensor] = {k: self.to_device(v) for k, v in batch.items()}
+            embeddings: List[torch.Tensor] = self.colpali(**batch)
             
         return embeddings[0].float()
     
@@ -172,14 +175,14 @@ class ColPaliModel(LateInteractionModel):
                     for _ in range(len(images))]
 
         with torch.no_grad():
-            batch = self.processor.process_images(valid_images)
-            batch = {k: self.to_device(v) for k, v in batch.items()}
-            raw_embeddings = self.colpali(**batch)
+            batch: BatchFeature = self.processor.process_images(valid_images)
+            batch: Dict[str, torch.Tensor] = {k: self.to_device(v) for k, v in batch.items()}
+            raw_embeddings: List[torch.Tensor] = self.colpali(**batch)
         
-        valid_embeddings = [emb[emb.norm(dim=-1) > 0].float() for emb in raw_embeddings]
+        valid_embeddings: List[torch.Tensor] = [emb[emb.norm(dim=-1) > 0].float() for emb in raw_embeddings]
         
-        result_embeddings = []
-        valid_idx = 0
+        result_embeddings: List[torch.Tensor] = []
+        valid_idx: int = 0
         
         for i in range(len(images)):
             if i in valid_indices:
