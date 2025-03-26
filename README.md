@@ -18,10 +18,14 @@ A Python library for creating and using multi-vector tables in DataStax Astra DB
   - [Late Interaction Architecture](#late-interaction-architecture)
 - [Gutenberg Example](#gutenberg-example)
 - [Late Interaction](#late-interaction)
+  - [ColBERT for Text Search](#colbert-for-text-search)
+  - [ColPali for Multimodal Search](#colpali-for-multimodal-search)
+  - [Performance Optimizations](#performance-optimizations)
 - [API Reference](#api-reference)
   - [VectorColumnOptions](#vectorcolumnoptions)
   - [AstraMultiVectorTable](#astramultivectortable)
   - [AsyncAstraMultiVectorTable](#asyncastramultivectortable)
+  - [LateInteractionPipeline](#lateinteractionpipeline)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -34,11 +38,14 @@ AstraMultiVector provides classes to:
   - Server-side embeddings using Astra's Vectorize feature
 - Search across any vector column using similarity search
 - Support both synchronous and asynchronous operations
+- Implement token-level late interaction models for advanced retrieval
 
 This allows for storing and retrieving text data with multiple embedding representations, which is useful for:
 - Multilingual document search
 - Comparing different embedding models
 - Specialized embeddings for different query types
+- Token-level late interaction for higher precision retrieval
+- Multimodal search with text and images
 
 ## Installation
 
@@ -229,11 +236,11 @@ The late interaction architecture splits documents into token-level embeddings a
 ├──────────┬───────────────────────────┐ │     ├──────────┬──────────┬─────────────────┐│
 │ doc_id   │ content                   │ │     │ doc_id   │ token_id │ token_embedding ││
 ├──────────┼───────────────────────────┤ │     ├──────────┼──────────┼─────────────────┤│
-│ UUID-1   │ "Example document content"│ │     │ UUID-1   │ tok-1.1  │ [0.1, 0.2, ...] ││
-│ UUID-2   │ "Another document example"│ │     │ UUID-1   │ tok-1.2  │ [0.3, 0.4, ...] ││
-└──────────┴───────────────────────────┘ │     │ UUID-1   │ tok-1.3  │ [0.5, 0.6, ...] ││
-                                         │     │ UUID-2   │ tok-2.1  │ [0.7, 0.8, ...] ││
-                                         │     │ UUID-2   │ tok-2.2  │ [0.9, 1.0, ...] ││
+│ UUID-1   │ "Example document content"│ │     │ UUID-1   │ UUID-1.1 │ [0.1, 0.2, ...] ││
+│ UUID-2   │ "Another document example"│ │     │ UUID-1   │ UUID-1.2 │ [0.3, 0.4, ...] ││
+└──────────┴───────────────────────────┘ │     │ UUID-1   │ UUID-1.3 │ [0.5, 0.6, ...] ││
+                                         │     │ UUID-2   │ UUID-2.1 │ [0.7, 0.8, ...] ││
+                                         │     │ UUID-2   │ UUID-2.2 │ [0.9, 1.0, ...] ││
                                          │     └──────────┴──────────┴─────────────────┘│
                                                          │            │
                                                          │            ▼
@@ -242,14 +249,20 @@ The late interaction architecture splits documents into token-level embeddings a
                                                          │     └─────────────┘
                                                          │
                                                          ▼
-                                                 Referenced during
-                                                 token->document lookup
+                                                 Partition Key
+
 ```
 
 This architecture allows for:
 - Token-level similarity matching between queries and documents
 - Higher precision retrieval with late interaction models like ColBERT
 - Multimodal matching between text and images with models like ColPali
+
+Key implementation details:
+- Both `doc_id` and `token_id` are UUID types for maximum compatibility
+- `doc_id` is used as the partition key to efficiently retrieve all tokens for a document
+- Token table uses a vector index on `token_embedding` for similarity search
+- Documents are stored with their original content for retrieval and verification
 
 ## Gutenberg Example
 
@@ -344,7 +357,34 @@ for doc_id, score, content in results:
     print(f"Content: {content}")
 ```
 
-### Multimodal Search with ColPali
+### ColBERT for Text Search
+
+ColBERT is a text-to-text late interaction model that provides high-precision search:
+
+```python
+from astra_multivector.late_interaction import LateInteractionPipeline, ColBERTModel
+
+# Initialize model with specific checkpoint
+model = ColBERTModel(
+    model_name="answerdotai/answerai-colbert-small-v1",
+    device="cuda"  # or "cpu" for machines without GPUs
+)
+
+# Create pipeline
+pipeline = LateInteractionPipeline(
+    db=db,
+    model=model,
+    base_table_name="my_colbert_index"
+)
+
+# Search
+results = await pipeline.search(
+    query="detailed search query", 
+    k=10
+)
+```
+
+### ColPali for Multimodal Search
 
 For multimodal search supporting images and text:
 
@@ -384,11 +424,32 @@ results = await pipeline.search_with_embeddings(
 )
 ```
 
-Supported models include:
-- **ColBERT**: Text-to-text token-level matching for high-precision search
-- **ColPali**: Multimodal token-level matching supporting image-to-text and text-to-image search
+ColPali now supports direct image indexing, allowing you to pass PIL Image objects as document content. The pipeline automatically handles:
+- Image preprocessing and tokenization
+- Token-level embedding generation
+- Proper storage with content type identification
+- Retrieval with either text or image queries
 
-For more details, see the [Late Interaction README](src/astra_multivector/late_interaction/README.md).
+### Performance Optimizations
+
+The late interaction pipeline includes several optimizations to balance retrieval quality with computational efficiency:
+
+1. **Token Pooling**: 
+   - **Query Pooling**: Reduces query token count by merging similar tokens (controlled by `query_pool_distance`)
+   - **Document Pooling**: Hierarchically pools document tokens to reduce index size (controlled by `doc_pool_factor`)
+
+2. **Adaptive Parameter Scaling**:
+   - Automatically scales search parameters based on result count
+   - Default values adapt to different `k` values without manual tuning
+
+3. **Concurrency Controls**:
+   - Document-level parallelism for batch operations
+   - Token-level parallelism for efficient indexing
+   - Semaphore controls to prevent resource exhaustion
+
+4. **Caching**:
+   - LRU cache for frequently accessed document embeddings
+   - Configurable cache size to balance memory usage and performance
 
 ## API Reference
 
@@ -398,6 +459,22 @@ Configures vector columns with embedding options:
 
 - `from_sentence_transformer()`: For client-side embeddings with sentence-transformers
 - `from_vectorize()`: For server-side embeddings with Astra's Vectorize
+
+```python
+# Configuration options
+VectorColumnOptions.from_sentence_transformer(
+    model,                      # SentenceTransformer model instance
+    column_name=None,           # Optional custom column name
+    table_vector_index_options  # Vector index configuration
+)
+
+VectorColumnOptions.from_vectorize(
+    column_name,                # Name for the vector column
+    dimension,                  # Vector dimension
+    vector_service_options,     # Service provider configuration 
+    table_vector_index_options  # Vector index configuration
+)
+```
 
 ### AstraMultiVectorTable
 
@@ -409,6 +486,23 @@ Synchronous table operations:
 - `batch_search_by_text()`: Perform multiple searches in parallel
 - `search_and_rerank()`: Search and rerank results with a reranker model
 
+```python
+# Core operations
+table.insert_chunk(
+    text,                 # Text to embed and store
+    chunk_id=None,        # Optional UUID (auto-generated if None)
+    metadata=None         # Optional metadata dictionary
+)
+
+table.multi_vector_similarity_search(
+    query_text,           # Query string to search for
+    column_name=None,     # Optional specific column to search (None = search all)
+    candidates_per_column=20, # Number of candidates per vector column
+    k=10,                 # Number of final results to return
+    include_similarity=True   # Whether to include similarity scores
+)
+```
+
 ### AsyncAstraMultiVectorTable
 
 Asynchronous table operations:
@@ -419,6 +513,56 @@ Asynchronous table operations:
 - `batch_search_by_text()`: Execute multiple searches in parallel
 - `search_and_rerank()`: Search and rerank results asynchronously with a reranker model
 - `parallel_process_chunks()`: Process items in parallel with custom function
+
+```python
+# Async operations
+await async_table.bulk_insert_chunks(
+    text_chunks,          # List of text chunks to insert
+    max_concurrency=10,   # Maximum number of concurrent operations
+    batch_size=20,        # Number of chunks per batch
+    chunk_ids=None,       # Optional list of UUIDs (auto-generated if None)
+    metadata=None         # Optional list of metadata dictionaries
+)
+
+await async_table.batch_search_by_text(
+    queries,              # List of query strings
+    max_concurrency=10,   # Maximum number of concurrent searches
+    column_name=None,     # Optional specific column to search
+    k=10                  # Number of results per query
+)
+```
+
+### LateInteractionPipeline
+
+Manages token-level late interaction models:
+
+- `initialize()`: Create and configure document and token tables
+- `index_document()`: Index a single document with token-level embeddings
+- `bulk_index_documents()`: Batch index multiple documents with concurrency control
+- `search()`: Perform two-stage retrieval with auto-scaled parameters
+- `delete_document()`: Remove a document and its tokens from the database
+
+```python
+# Pipeline configuration
+pipeline = LateInteractionPipeline(
+    db,                         # AsyncDatabase instance
+    model,                      # LateInteractionModel instance (ColBERT, ColPali)
+    base_table_name,            # Base name for document and token tables
+    doc_pool_factor=2,          # Factor by which to pool document embeddings
+    query_pool_distance=0.03,   # Maximum distance for pooling query tokens
+    sim_metric="cosine",        # Similarity metric (cosine or dot_product)
+    default_concurrency_limit=10, # Default concurrency for async operations
+    embedding_cache_size=1000   # Size of LRU cache for document embeddings
+)
+
+# Advanced search options
+results = await pipeline.search(
+    query,                      # Query string or image
+    k=10,                       # Number of results to return
+    n_ann_tokens=None,          # Tokens to retrieve per query (auto-calculated if None)
+    n_maxsim_candidates=None    # Document candidates for scoring (auto-calculated if None)
+)
+```
 
 ## Contributing
 
