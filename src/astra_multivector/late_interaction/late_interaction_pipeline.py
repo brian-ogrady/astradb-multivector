@@ -2,11 +2,11 @@ import asyncio
 import uuid
 import logging
 from typing import Iterable, List, Dict, Any, Optional, Union, Tuple
-from functools import lru_cache
 
 import numpy as np
 import torch
 from PIL.Image import Image
+from async_lru import alru_cache
 from astrapy import AsyncDatabase, AsyncTable
 from astrapy.constants import SortMode, VectorMetric
 from astrapy.cursors import AsyncTableFindCursor
@@ -649,10 +649,10 @@ class LateInteractionPipeline:
         logger.info("No document embeddings retrieved")
         return []
     
-    @lru_cache(maxsize=1000)
+    @alru_cache(maxsize=1000)
     async def _cached_doc_embeddings(
         self, 
-        doc_ids: Tuple[str]
+        doc_ids: Tuple[uuid.UUID]
     ) -> List[torch.Tensor]:
         """
         Cached version of document token embeddings loading.
@@ -663,9 +663,8 @@ class LateInteractionPipeline:
         Returns:
             List of token embedding tensors, one per document
         """
-        doc_ids_uuid = [uuid.UUID(doc_id) for doc_id in doc_ids]
-        
-        return await self._load_doc_token_embeddings(doc_ids_uuid)
+
+        return await self._load_doc_token_embeddings(doc_ids)
 
     async def _load_doc_token_embeddings(
         self, 
