@@ -1,6 +1,9 @@
 import asyncio
+import heapq
 import uuid
+import time
 import logging
+from collections import Counter
 from typing import Iterable, List, Dict, Any, Optional, Union, Tuple
 
 import numpy as np
@@ -113,8 +116,10 @@ class LateInteractionPipeline:
         schema = (
             CreateTableDefinition.builder()
             .add_column("doc_id", ColumnType.UUID)
+            .add_column("page_number", ColumnType.INT)
             .add_column("content", ColumnType.TEXT)
             .add_partition_by(["doc_id"])
+            .add_partition_sort({"page_number": SortMode.ASCENDING})
         )
 
         if self.model.supports_images:
@@ -138,10 +143,11 @@ class LateInteractionPipeline:
         schema = (
             CreateTableDefinition.builder()
             .add_column("doc_id", ColumnType.UUID)
+            .add_column("page_number", ColumnType.INT)
             .add_column("token_id", ColumnType.UUID)
             .add_vector_column(token_column_name, dimension=self.model.dim)
             .add_partition_by(["doc_id"])
-            .add_partition_sort({"token_id": SortMode.ASCENDING})
+            .add_partition_sort({"page_number": SortMode.ASCENDING})
         ).build()
         
         logger.debug(f"Creating token table: {self.token_table_name} with dimension {self.model.dim}")
@@ -506,6 +512,9 @@ class LateInteractionPipeline:
         3. Create a metadata index table for common query patterns
         4. Consider hybrid retrieval that combines vector and metadata filtering
         """
+
+        import time
+        start_time = time.time()
         
         if not self._initialized:
             await self.initialize()
@@ -532,11 +541,140 @@ class LateInteractionPipeline:
             )
             
             logger.info(f"Search completed. Found {len(results)} results.")
+            end_time = time.time()
+            logger.debug(f"Search completed in {end_time - start_time} seconds")
             return results
         except Exception as e:
             logger.error(f"Error during search: {str(e)}")
             raise
+
+    async def _maxsim_score(
+        self,
+        Q: torch.Tensor,
+        doc_embeddings: List[torch.Tensor],
+        k: int,
+        candidates: List[uuid.UUID],
+    ) -> torch.Tensor:
+        """
+        Calculate MaxSim scores between query and document embeddings.
+        
+        Args:
+            Q: Query token embeddings as PyTorch tensor 
+            doc_embeddings: Document token embeddings as PyTorch tensor
+            k: Number of top results to return
+            n_maxsim_candidates: Number of document candidates for MaxSim scoring
+            
+        Returns:
+            MaxSim scores as PyTorch tensor
+        """
+
+        start_time = time.time()
+        logger.debug(f"Calculating MaxSim scores for {len(doc_embeddings)} documents")
+        scores: torch.Tensor = self.model.score(Q, doc_embeddings)
+            
+        logger.debug("Converting scores and sorting results")
+        score_items = [(doc_id, score.item()) for doc_id, score in zip(candidates, scores)]
+        top_k = sorted(score_items, key=lambda x: x[1], reverse=True)[:k]
+            
+        logger.debug(f"Fetching content for {len(top_k)} top documents")
+        doc_ids_str = [doc_id for doc_id, _ in top_k]
+        cursor = await self.async_find(
+            self._doc_table,
+            filter={"doc_id": {"$in": doc_ids_str}}
+        )
+        docs = await cursor.to_list()
+            
+        logger.debug(f"Building final result set with {len(docs)} documents")
+        doc_map = {doc["doc_id"]: doc for doc in docs}
+                
+        results = [(doc_id, score, doc_map.get(doc_id, {}).get("content", "")) 
+                    for doc_id, score in top_k]
+            
+        end_time = time.time()
+        logger.debug(f"MaxSim scoring completed in {end_time - start_time} seconds")
+        return results
     
+    async def _execute_token_level_searches(
+        self,
+        Q_np: np.ndarray,
+        n_ann_tokens: int,
+        **kwargs,
+    ) -> List[List[Dict[str, Any]]]:
+        """
+        Execute token-level searches for each query token.
+        
+        Args:
+            Q_np: Query token embeddings as NumPy array
+            n_ann_tokens: Number of tokens to retrieve for each query token
+        """
+        start_time = time.time()
+        required_projection: Dict[str, bool] = {"token_embedding": True, "doc_id": True}
+        user_projection: Dict[str, bool] = kwargs.pop("projection", {})
+        merged_projection: Dict[str, bool] = {**user_projection, **required_projection}
+        
+        token_search_tasks = [
+            self.async_find(
+                self._token_table,
+                sort={
+                    "token_embedding": token_embedding.tolist()
+                },
+                limit=n_ann_tokens,
+                include_similarity=True,
+                projection=merged_projection,
+                **kwargs,
+            )
+            for token_embedding in Q_np
+        ]
+
+        cursors: List[AsyncTableFindCursor] = await asyncio.gather(*token_search_tasks)
+        doc_token_results_list: List[List[Dict[str, Any]]] = (
+            await asyncio.gather(*[cursor.to_list() for cursor in cursors])
+        )
+        end_time = time.time()
+        logger.debug(f"Token-level search completed in {end_time - start_time} seconds")
+
+        return doc_token_results_list
+
+    async def _aggregate_token_level_results(
+        self,
+        doc_token_results_list: List[List[Dict[str, Any]]],
+        n_maxsim_candidates: int,
+    ) -> List[uuid.UUID]:
+        """
+        Aggregate token-level results into a single dictionary of document scores.
+        """
+        start_time = time.time()
+        doc_scores, doc_token_scores = Counter(), {}
+
+        logger.debug(f"Selecting top {n_maxsim_candidates} candidates for MaxSim scoring")
+
+
+        for query_token_idx, doc_token_results in enumerate(doc_token_results_list):
+            for result in doc_token_results:
+                if not (doc_id := result.get("doc_id", "")):
+                    continue
+
+                key = (doc_id, query_token_idx)
+                similarity = result.get("$similarity", 0)
+                 
+                if key in doc_token_scores:
+                    if similarity > doc_token_scores[key]:
+                        doc_scores[doc_id] += (similarity - doc_token_scores[key])
+                        doc_token_scores[key] = similarity
+                else:
+                    doc_token_scores[key] = similarity
+                    doc_scores[doc_id] += similarity
+
+        logger.debug(f"Aggregated scores for {len(doc_scores)} unique documents")
+        end_time = time.time()
+        logger.debug(f"Token-level aggregation completed in {end_time - start_time} seconds")
+
+        return heapq.nlargest(
+                    n_maxsim_candidates, 
+                    doc_scores.keys(),
+                    key=lambda d: doc_scores[d]
+                )
+
     async def _search_with_embeddings(
         self,
         Q: torch.Tensor,
@@ -560,91 +698,31 @@ class LateInteractionPipeline:
         Returns:
             List of tuples with (doc_id, score, content) for top k documents
         """
-        logger.debug(f"Running ANN search for {len(Q_np)} query tokens")
 
-        required_projection = {"token_embedding": True, "doc_id": True}
-        user_projection = kwargs.pop("projection", {})
-        merged_projection = {**user_projection, **required_projection}
+        doc_token_results_list: List[List[Dict[str, Any]]] = (
+            await self._execute_token_level_searches(Q_np, n_ann_tokens, **kwargs)
+        )
 
-        token_search_tasks = [
-            self.async_find(
-                self._token_table,
-                sort={
-                    "token_embedding": token_embedding.tolist()
-                },
-                limit=n_ann_tokens,
-                include_similarity=True,
-                projection=merged_projection,
-                **kwargs,
-            )
-            for token_embedding in Q_np
-        ]
-        
-        cursors = await asyncio.gather(*token_search_tasks)
-        doc_token_results_list = await asyncio.gather(*[cursor.to_list() for cursor in cursors])
+        logger.debug(f"ANN search returned {len(doc_token_results_list) * n_ann_tokens}"
+                     f"results across {len(doc_token_results_list)} query tokens")
 
-        total_results = sum(len(results) for results in doc_token_results_list)
-        logger.debug(f"ANN search returned {total_results} results across {len(doc_token_results_list)} query tokens")
-        
-        doc_token_scores = {}
-        for query_token_idx, doc_token_results in enumerate(doc_token_results_list):
-            for result in doc_token_results:
-                try:
-                    if not (doc_id := result.get("doc_id", "")):
-                        logger.warning(f"No valid doc_id for token: {result.get('token_id')}")
-                        continue
-                    
-                    key = (doc_id, query_token_idx)
-                    similarity = result.get("$similarity", 0)
-                    doc_token_scores[key] = max(doc_token_scores.get(key, -1), similarity)
-                except Exception as e:
-                    logger.warning(f"Error processing token result: {str(e)}")
-                    continue
-        
-        logger.debug(f"Aggregating scores for {len(set(d for d, _ in doc_token_scores.keys()))} unique documents")
-        doc_scores = {}
-        for (doc_id, _), similarity in doc_token_scores.items():
-            doc_scores[doc_id] = doc_scores.get(doc_id, 0) + similarity
-            
-        logger.debug(f"Selecting top {n_maxsim_candidates} candidates for MaxSim scoring")
-        candidates = sorted(
-            doc_scores.keys(), 
-            key=lambda d: doc_scores[d], 
-            reverse=True
-        )[:n_maxsim_candidates]
-        
+        candidates: List[uuid.UUID] = await self._aggregate_token_level_results(
+            doc_token_results_list,
+            n_maxsim_candidates,
+        )
+
         if not candidates:
             logger.info("No candidates found in first-stage retrieval")
             return []
             
         logger.debug(f"Selected {len(candidates)} candidates for MaxSim scoring")
-            
-        logger.debug(f"Fetching token embeddings for {len(candidates)} candidate documents")
-        candidates_tuple = tuple(str(c) for c in candidates)
-        doc_embeddings = await self._cached_doc_embeddings(candidates_tuple)
+
+        candidates_tuple: Tuple[str] = tuple(str(c) for c in candidates)
+
+        doc_embeddings: List[torch.Tensor] = await self._cached_doc_embeddings(candidates_tuple)
         
         if doc_embeddings:
-            logger.debug(f"Calculating MaxSim scores for {len(doc_embeddings)} documents")
-            scores = self.model.score(Q, doc_embeddings)
-            
-            logger.debug("Converting scores and sorting results")
-            score_items = [(doc_id, score.item()) for doc_id, score in zip(candidates, scores)]
-            top_k = sorted(score_items, key=lambda x: x[1], reverse=True)[:k]
-            
-            logger.debug(f"Fetching content for {len(top_k)} top documents")
-            doc_ids_str = [str(doc_id) for doc_id, _ in top_k]
-            cursor = await self.async_find(
-                self._doc_table,
-                filter={"doc_id": {"$in": doc_ids_str}}
-            )
-            docs = await cursor.to_list()
-            
-            logger.debug(f"Building final result set with {len(docs)} documents")
-            doc_map = {doc["doc_id"]: doc for doc in docs}
-                
-            results = [(doc_id, score, doc_map.get(doc_id, {}).get("content", "")) 
-                    for doc_id, score in top_k]
-            return results
+            return await self._maxsim_score(Q, doc_embeddings, k, candidates)
             
         logger.info("No document embeddings retrieved")
         return []
@@ -653,7 +731,7 @@ class LateInteractionPipeline:
     async def _cached_doc_embeddings(
         self, 
         doc_ids: Tuple[uuid.UUID]
-    ) -> List[torch.Tensor]:
+    ) -> torch.Tensor:
         """
         Cached version of document token embeddings loading.
         
@@ -682,13 +760,23 @@ class LateInteractionPipeline:
         logger.debug(f"Loading token embeddings for {len(doc_ids)} documents")
         
         logger.debug(f"Creating parallel fetch tasks for {len(doc_ids)} documents")
+
+        semaphore = asyncio.Semaphore(5)
+        async def fetch_with_semaphore(doc_id: uuid.UUID) -> torch.Tensor:
+            async with semaphore:
+                return await self._fetch_token_embeddings(doc_id)
+
+        start_time = time.time()
         tasks = [
-            self._fetch_token_embeddings(doc_id) 
+            fetch_with_semaphore(doc_id) 
             for doc_id in doc_ids
         ]
         
         logger.debug(f"Executing {len(tasks)} token embedding fetch tasks concurrently")
-        return await asyncio.gather(*tasks)
+        embeddings: List[torch.Tensor] = await asyncio.gather(*tasks)
+        end_time = time.time()
+        logger.debug(f"Token embedding fetch completed in {end_time - start_time} seconds")
+        return embeddings
 
     async def _fetch_token_embeddings(
         self, 
