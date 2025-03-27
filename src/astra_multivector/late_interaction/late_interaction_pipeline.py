@@ -88,9 +88,14 @@ class LateInteractionPipeline:
     
     async def initialize(self) -> None:
         """
-        Initialize document and token tables.
+        Initialize document and token tables for the late interaction pipeline.
         
-        Creates the necessary tables and vector indexes if they don't exist.
+        This method sets up the necessary database infrastructure:
+        1. Creates the document table for storing document content
+        2. Creates the token table for storing token-level embeddings
+        3. Creates the required vector indexes for similarity search
+        
+        All operations use if_not_exists=True to ensure idempotency.
         """
         async with self._init_lock:
             if not self._initialized:
@@ -106,12 +111,18 @@ class LateInteractionPipeline:
     
     async def _create_doc_table(self) -> AsyncTable:
         """
-        Create the document table for storing document content.
+        Create the document table for storing document content and metadata.
+        
+        Defines the schema for the document table with appropriate partitioning
+        and sorting to optimize data access patterns for document retrieval.
         
         TODO: In future versions of the Data API, enhance this schema to include:
          1. Proper indexing for metadata fields
          2. Searchable JSON/map column type for efficient metadata filtering
          3. Consider separating commonly filtered metadata into dedicated indexed columns
+         
+        Returns:
+            AsyncTable: The created or existing document table
         """
         schema = (
             CreateTableDefinition.builder()
@@ -136,7 +147,13 @@ class LateInteractionPipeline:
     
     async def _create_token_table(self) -> AsyncTable:
         """
-        Create the token table for storing token-level embeddings.
+        Create the token table for storing token-level embeddings with vector search capabilities.
+        
+        Defines the schema for the token table and creates the necessary vector index
+        for efficient similarity search using the configured similarity metric.
+        
+        Returns:
+            AsyncTable: The created or existing token table with vector indexing
         """
         token_column_name = "token_embedding"
 
@@ -179,6 +196,9 @@ class LateInteractionPipeline:
         Args:
             table: The table to search
             **kwargs: Additional keyword arguments to pass to the find method
+            
+        Returns:
+            AsyncTableFindCursor: Cursor for accessing the query results
         """
         cursor: AsyncTableFindCursor = table.find(**kwargs)
 
@@ -186,16 +206,22 @@ class LateInteractionPipeline:
     
     async def _validate_row(self, document_row: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Validate and prepare a document row for insertion.
+        Validate and prepare a document row for insertion into the database.
+        
+        This method performs comprehensive validation and normalization of document data:
+        1. Validates the presence of required fields
+        2. Handles both text and image content types
+        3. Validates content against model capabilities (e.g., image support)
+        4. Maps document fields to the database schema
         
         Args:
-            document_row: Input document dictionary
+            document_row: Input document dictionary containing content and metadata
             
         Returns:
-            Processed document dictionary ready for insertion
+            Dictionary with validated insertion data, original content, and document ID
             
         Raises:
-            ValueError: If required fields are missing or invalid
+            ValueError: If required fields are missing or the content type is unsupported
         """
         content = document_row.get('content')
         if not content:
@@ -242,13 +268,25 @@ class LateInteractionPipeline:
         **kwargs,
     ) -> Optional[uuid.UUID]:
         """
-        Index a document by storing its content and token embeddings.
+        Index a single document by storing its content and token embeddings.
+        
+        This method processes a document through the complete indexing pipeline:
+        1. Validates and prepares the document data
+        2. Stores document content in the document table
+        3. Generates token-level embeddings using the late interaction model
+        4. Applies optional document embedding pooling
+        5. Stores token embeddings in the token table
         
         Args:
             document_row: Dictionary containing document content and metadata
-            **kwargs: Additional keyword arguments from insert_one
+            **kwargs: Additional keyword arguments passed to insert_one
+            
         Returns:
-            The document ID
+            The document ID of the indexed document
+            
+        Raises:
+            ValueError: If document validation fails
+            Exception: If any step in the indexing process fails
         """
         if not self._initialized:
             await self.initialize()
@@ -290,16 +328,24 @@ class LateInteractionPipeline:
         **kwargs,
     ) -> List[List[uuid.UUID]]:
         """
-        Index token embeddings for one or more documents.
+        Index token embeddings for one or more documents into the token table.
+        
+        This method handles the conversion and storage of token-level embeddings,
+        performing validation and efficient batch insertion into the database.
         
         Args:
             doc_ids: Single document ID or list of document IDs
-            embeddings: 2D tensor of token-wise embeddings or list of such tensors, corresponding to doc_ids.
-                    Each tensor has shape [num_tokens, embedding_dim].
+            embeddings: 2D tensor of token-wise embeddings or list of such tensors, 
+                    corresponding to doc_ids. Each tensor has shape [num_tokens, embedding_dim].
             db_concurrency: Maximum number of concurrent database insertions
+            **kwargs: Additional keyword arguments for database insertion
             
         Returns:
             List of lists of token IDs, one inner list per document
+            
+        Raises:
+            ValueError: If input validation fails
+            TypeError: If embeddings are not of the expected type
         """
         if not isinstance(doc_ids, list):
             doc_ids = [doc_ids]
@@ -368,17 +414,22 @@ class LateInteractionPipeline:
         **kwargs
     ) -> List[uuid.UUID]:
         """
-        Index multiple documents in batches with concurrency control.
+        Index multiple documents in batches with optimized concurrency control.
+        
+        This method efficiently indexes large numbers of documents by:
+        1. Processing documents in manageable batches
+        2. Parallelizing embedding computation with controlled concurrency
+        3. Optimizing database operations for the Data API
         
         Args:
             document_rows: Iterable of document dictionaries, each containing content and metadata
             embedding_concurrency: Maximum number of concurrent embedding operations
             batch_size: Number of documents to process in a single batch
-            concurrency: Maximum number of concurrent database requests for the Data API (default: 10)
+            concurrency: Maximum number of concurrent database requests for the Data API
             **kwargs: Additional arguments to pass to insert_many (e.g., ordered, timeout_ms)
             
         Returns:
-            List of document IDs
+            List of successfully indexed document IDs
         """
         if not self._initialized:
             logger.debug("Initializing tables before bulk indexing")
@@ -455,15 +506,17 @@ class LateInteractionPipeline:
     
     async def encode_query(self, query: str) -> torch.Tensor:
         """
-        Encode a query string into token embeddings.
+        Encode a query string into token embeddings with optional pooling.
         
-        Applies query pooling if enabled.
+        This method converts a text query into token-level embeddings using
+        the underlying late interaction model, and applies pooling based on
+        the configured query_pool_distance parameter.
         
         Args:
-            query: Query string
+            query: Query string to encode
             
         Returns:
-            Query token embeddings tensor
+            Query token embeddings as a PyTorch tensor
         """
         logger.debug(f"Encoding query: {query[:50]}{'...' if len(query) > 50 else ''}")
         query_embeddings = await self.model.encode_query(query)
@@ -486,25 +539,25 @@ class LateInteractionPipeline:
         **kwargs,
     ) -> List[Tuple[uuid.UUID, float, str]]:
         """
-        Perform a late interaction search.
+        Perform a late interaction search using a two-stage retrieval process.
 
-        Uses a two-stage retrieval process:
-        1. ANN search to find candidate tokens - For each query token, retrieves the most similar token vectors
-        2. MaxSim calculation for final ranking - Computes MaxSim scores between query and candidate documents
+        Stage 1: ANN search finds candidate tokens by retrieving the most similar token 
+                vectors for each query token.
+        Stage 2: MaxSim calculation computes final relevance scores between the query and 
+                candidate documents for ranking.
 
         Args:
-        query: Query string to search for
-        k: Number of top results to return (default: 10)
-        n_ann_tokens: Number of tokens to retrieve for each query token in the ANN stage.
-                        If None, automatically scales based on k (e.g., ~171 for k=10, ~514 for k=100)
-        n_maxsim_candidates: Number of document candidates to consider for MaxSim scoring.
-                            If None, automatically scales based on k (e.g., ~20 for k=10, ~119 for k=100)
-        filter_condition: Optional filter condition for the document search. Currently supports
-                            basic filtering; enhanced metadata filtering planned for future releases.
+            query: Query string to search for
+            k: Number of top results to return (default: 10)
+            n_ann_tokens: Number of tokens to retrieve for each query token in the ANN stage.
+                If None, automatically scales based on k (e.g., ~171 for k=10, ~514 for k=100)
+            n_maxsim_candidates: Number of document candidates to consider for MaxSim scoring.
+                If None, automatically scales based on k (e.g., ~20 for k=10, ~119 for k=100)
+            **kwargs: Additional parameters passed to the underlying search operations
         
         Returns:
-        List of tuples with (doc_id, score, content) for top k documents, sorted by relevance score
-        in descending order.
+            List of tuples containing (doc_id, score, content) for top k documents, 
+            sorted by relevance score in descending order.
         
         TODO: Future enhancement - When metadata indexing is supported by the Data API:
         1. Implement efficient metadata filtering at query time
@@ -554,18 +607,22 @@ class LateInteractionPipeline:
         doc_embeddings: List[torch.Tensor],
         k: int,
         candidates: List[uuid.UUID],
-    ) -> torch.Tensor:
+    ) -> List[Tuple[uuid.UUID, float, str]]:
         """
-        Calculate MaxSim scores between query and document embeddings.
+        Calculate MaxSim scores between query and document embeddings and return ranked results.
+        
+        This method is responsible for the second stage of retrieval, computing
+        precise relevance scores between the query and candidate documents using
+        the late interaction model's scoring function.
         
         Args:
-            Q: Query token embeddings as PyTorch tensor 
-            doc_embeddings: Document token embeddings as PyTorch tensor
+            Q: Query token embeddings tensor
+            doc_embeddings: List of document token embeddings tensors
             k: Number of top results to return
-            n_maxsim_candidates: Number of document candidates for MaxSim scoring
+            candidates: List of document ID candidates to score
             
         Returns:
-            MaxSim scores as PyTorch tensor
+            List of tuples with (doc_id, score, content) for the top k documents
         """
 
         start_time = time.time()
@@ -603,9 +660,16 @@ class LateInteractionPipeline:
         """
         Execute token-level searches for each query token.
         
+        Performs parallel vector searches for each query token embedding
+        to find the most similar token embeddings in the database.
+        
         Args:
             Q_np: Query token embeddings as NumPy array
             n_ann_tokens: Number of tokens to retrieve for each query token
+            **kwargs: Additional search parameters passed to the database query
+            
+        Returns:
+            List of lists containing token search results for each query token
         """
         start_time = time.time()
         required_projection: Dict[str, bool] = {"token_embedding": True, "doc_id": True}
@@ -641,7 +705,18 @@ class LateInteractionPipeline:
         n_maxsim_candidates: int,
     ) -> List[uuid.UUID]:
         """
-        Aggregate token-level results into a single dictionary of document scores.
+        Aggregate token-level results into a ranked list of document candidates.
+        
+        This method processes the ANN search results for all query tokens and
+        aggregates the similarity scores to identify the most promising document
+        candidates for the MaxSim scoring phase.
+        
+        Args:
+            doc_token_results_list: List of token search results for each query token
+            n_maxsim_candidates: Number of top document candidates to select
+            
+        Returns:
+            List of document IDs for the top n_maxsim_candidates documents
         """
         start_time = time.time()
         doc_scores, doc_token_scores = Counter(), {}
@@ -687,13 +762,16 @@ class LateInteractionPipeline:
         """
         Perform a late interaction search with pre-computed query embeddings.
         
+        This internal method implements the core search functionality using
+        pre-computed embeddings, executing the two-stage retrieval process.
+        
         Args:
             Q: Query token embeddings as PyTorch tensor
             Q_np: Query token embeddings as NumPy array
             k: Number of top results to return
             n_ann_tokens: Number of tokens to retrieve for each query token
             n_maxsim_candidates: Number of document candidates for MaxSim scoring
-            filter_condition: Optional filter condition for the document search
+            **kwargs: Additional keyword arguments passed to the underlying search operations
             
         Returns:
             List of tuples with (doc_id, score, content) for top k documents
@@ -731,9 +809,12 @@ class LateInteractionPipeline:
     async def _cached_doc_embeddings(
         self, 
         doc_ids: Tuple[uuid.UUID]
-    ) -> torch.Tensor:
+    ) -> List[torch.Tensor]:
         """
-        Cached version of document token embeddings loading.
+        Load document token embeddings with caching for improved performance.
+        
+        This method caches document token embeddings to reduce database load
+        and improve search performance for frequently accessed documents.
         
         Args:
             doc_ids: Tuple of document ID strings (tuple for hashability)
@@ -746,13 +827,16 @@ class LateInteractionPipeline:
 
     async def _load_doc_token_embeddings(
         self, 
-        doc_ids: List[uuid.UUID]
+        doc_ids: Union[Tuple[uuid.UUID], List[uuid.UUID]]
     ) -> List[torch.Tensor]:
         """
         Load token embeddings for the specified documents in parallel.
         
+        This method concurrently retrieves token embeddings for multiple documents,
+        optimizing database access patterns with semaphore-controlled concurrency.
+        
         Args:
-            doc_ids: List of document IDs
+            doc_ids: List or tuple of document IDs
             
         Returns:
             List of token embedding tensors, one per document
@@ -783,13 +867,16 @@ class LateInteractionPipeline:
         doc_id: uuid.UUID
     ) -> torch.Tensor:
         """
-        Fetch token embeddings for a single document.
+        Fetch token embeddings for a single document from the database.
+        
+        Retrieves all token embeddings for a specific document and
+        converts them to the appropriate tensor format for the model.
         
         Args:
-            doc_id: Document ID
+            doc_id: Document ID to fetch embeddings for
             
         Returns:
-            Token embeddings tensor for the document
+            Token embeddings tensor for the document, or an empty tensor if no embeddings found
         """
         logger.debug(f"Fetching token embeddings for document {doc_id}")
         cursor = await self.async_find(
@@ -818,13 +905,21 @@ class LateInteractionPipeline:
 
     async def delete_document(self, doc_id: uuid.UUID) -> Optional[bool]:
         """
-        Delete a document and its token embeddings.
+        Delete a document and all its associated token embeddings.
+        
+        This method ensures complete cleanup of document data by:
+        1. Removing the document content from the document table
+        2. Removing all token embeddings from the token table
+        3. Clearing any cached embeddings to maintain consistency
         
         Args:
             doc_id: Document ID to delete
             
         Returns:
-            True if document was deleted, False otherwise
+            True if document was deleted successfully
+            
+        Raises:
+            Exception: If an error occurs during deletion
         """
         if not self._initialized:
             logger.debug("Initializing before document deletion")
