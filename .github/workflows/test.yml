@@ -27,6 +27,7 @@ jobs:
 
       - name: Create virtualenv and install deps
         run: |
+          export HF_TOKEN=${{ secrets.HF_TOKEN }}
           uv venv
           source .venv/bin/activate
           uv pip install -e ".[all,dev]"
