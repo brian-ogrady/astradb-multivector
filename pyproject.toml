@@ -13,7 +13,7 @@ authors = [
     { name = "Brian O'Grady", email = "brian.ogrady@datastax.com" }
 ]
 maintainers = [
-    { name = "Your Name", email = "brian.ogrady@datastax.com" }
+    { name = "Brian O'Grady", email = "brian.ogrady@datastax.com" }
 ]
 keywords = ["astradb", "vector", "database", "embeddings", "similarity-search", "colbert", "late-interaction"]
 classifiers = [
