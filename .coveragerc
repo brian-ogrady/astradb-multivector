@@ -1,0 +1,6 @@
+[run]
+source = src/astra_multivector
+
+[report]
+show_missing = true
+skip_covered = true
