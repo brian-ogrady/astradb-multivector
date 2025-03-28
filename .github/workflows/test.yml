@@ -1,0 +1,48 @@
+name: Run Tests and Generate Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "~/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Create virtualenv and install deps
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+
+      - name: Run tests with coverage
+        run: |
+          source .venv/bin/activate
+          coverage run -m unittest discover -s tests -t .
+          coverage xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: true
+
+      - name: Report coverage summary
+        run: |
+          source .venv/bin/activate
+          coverage report -m
