@@ -4,6 +4,7 @@ A Python library for creating and using multi-vector tables in DataStax Astra DB
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python Version](https://img.shields.io/badge/python-3.12%2B-blue)](https://www.python.org/downloads/)
+[![codecov](https://codecov.io/gh/brian-ogrady/astradb-multivector/graph/badge.svg?token=9VZIE2OLQK)](https://codecov.io/gh/brian-ogrady/astradb-multivector)
 
 ## Table of Contents
 
