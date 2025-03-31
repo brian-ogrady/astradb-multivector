@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "astrapy==2.0.0rc0",
+    "astrapy==2.0.1",
     "pydantic>=2.10.6",
     "python-dotenv>=1.0.1",
     "rerankers[api,transformers]>=0.8.0",
