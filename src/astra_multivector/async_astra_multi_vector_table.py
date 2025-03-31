@@ -484,7 +484,7 @@ class AsyncAstraMultiVectorTable:
             The RankedResults object from the reranker, potentially limited to the specified number of results
         """
         if not results:
-            return RankedResults(results=[])
+            return RankedResults(query=query_text, results=[])
             
         texts = [doc["content"] for doc in results]
         doc_ids = [doc["chunk_id"] for doc in results]
