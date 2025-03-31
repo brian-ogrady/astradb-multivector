@@ -21,6 +21,7 @@ coverage run --append -m unittest tests/late_interaction/test_utils.py
 coverage run --append -m unittest tests/late_interaction/models/test_base.py
 coverage run --append -m unittest tests/late_interaction/models/test_colbert.py
 coverage run --append -m unittest tests/late_interaction/models/test_colpali.py
+coverage run --append -m unittest tests/test_init.py
 
 # Generate coverage reports
 echo "Generating coverage report..."
