@@ -55,9 +55,11 @@ class TestInitModule(unittest.TestCase):
         the package correctly sets HAS_LATE_INTERACTION to True when the
         dependency is available.
         """
-        with patch.dict(sys.modules, {'torch': importlib.util.module_from_spec(importlib.util.find_spec('unittest'))}):
-            import importlib
-            import astra_multivector
+        import astra_multivector
+        
+        mock_torch = importlib.util.module_from_spec(importlib.util.find_spec('unittest'))
+        
+        with patch.dict(sys.modules, {'torch': mock_torch}):
             importlib.reload(astra_multivector)
             
             self.assertTrue(astra_multivector.HAS_LATE_INTERACTION)
@@ -71,18 +73,22 @@ class TestInitModule(unittest.TestCase):
         dependency is not available, ensuring the package can function without
         optional features.
         """
-        with patch.dict(sys.modules, {'torch': None}):
-            def mock_import(*args, **kwargs):
-                if args[0] == 'torch':
-                    raise ImportError("No module named 'torch'")
-                return importlib.__import__(*args, **kwargs)
-            
-            with patch('builtins.__import__', side_effect=mock_import):
-                import importlib
-                import astra_multivector
-                importlib.reload(astra_multivector)
-                
-                self.assertFalse(astra_multivector.HAS_LATE_INTERACTION)
+        original_import = __import__
+        
+        def custom_import(name, *args, **kwargs):
+            if name == 'torch':
+                raise ImportError("No module named 'torch'")
+            return original_import(name, *args, **kwargs)
+        
+        try:
+            with patch.dict(sys.modules, {'torch': None}):
+                with patch('builtins.__import__', custom_import):
+                    import astra_multivector
+                    importlib.reload(astra_multivector)
+                    
+                    self.assertFalse(astra_multivector.HAS_LATE_INTERACTION)
+        finally:
+            pass
 
 
 if __name__ == '__main__':
