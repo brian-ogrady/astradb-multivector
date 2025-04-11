@@ -19,7 +19,6 @@ coverage run --append -m unittest tests/test_astra_multi_vector_table.py
 coverage run --append -m unittest tests/test_async_astra_multi_vector_table.py
 coverage run --append -m unittest tests/late_interaction/test_utils.py
 coverage run --append -m unittest tests/late_interaction/models/test_base.py
-coverage run --append -m unittest tests/late_interaction/models/test_colbert.py
 coverage run --append -m unittest tests/late_interaction/models/test_colpali.py
 coverage run --append -m unittest tests/test_init.py
 

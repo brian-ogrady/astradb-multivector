@@ -5,12 +5,69 @@ from typing import List, Union, Optional
 
 import numpy as np
 import torch
-from colbert.modeling.checkpoint import pool_embeddings_hierarchical
+from scipy.cluster.hierarchy import linkage, fcluster
 from sklearn.cluster import AgglomerativeClustering
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
 PoolingResult = namedtuple('PoolingResult', ['embeddings', 'stats'])
+
+
+def pool_embeddings_hierarchical(
+    p_embeddings,
+    token_lengths,
+    pool_factor,
+    protected_tokens: int = 0,
+    showprogress: bool = False,
+):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    p_embeddings = p_embeddings.to(device)
+    pooled_embeddings = []
+    pooled_token_lengths = []
+    start_idx = 0
+
+    T = tqdm(token_lengths, desc="Pooling tokens") if showprogress else token_lengths
+    for token_length in T:
+        # Get the embeddings for the current passage
+        passage_embeddings = p_embeddings[start_idx : start_idx + token_length]
+
+        # Remove the tokens at protected_tokens indices
+        protected_embeddings = passage_embeddings[:protected_tokens]
+        passage_embeddings = passage_embeddings[protected_tokens:]
+
+        # Cosine similarity computation (vector are already normalized)
+        similarities = torch.mm(passage_embeddings, passage_embeddings.t())
+
+        # Convert similarities to a distance for better ward compatibility
+        similarities = 1 - similarities.cpu().numpy()
+
+        # Create hierarchical clusters using ward's method
+        Z = linkage(similarities, metric="euclidean", method="ward")
+        # Determine the number of clusters we want in the end based on the pool factor
+        max_clusters = (
+            token_length // pool_factor if token_length // pool_factor > 0 else 1
+        )
+        cluster_labels = fcluster(Z, t=max_clusters, criterion="maxclust")
+
+        # Pool embeddings within each cluster
+        for cluster_id in range(1, max_clusters + 1):
+            cluster_indices = torch.where(
+                torch.tensor(cluster_labels == cluster_id, device=device)
+            )[0]
+            if cluster_indices.numel() > 0:
+                pooled_embedding = passage_embeddings[cluster_indices].mean(dim=0)
+                pooled_embeddings.append(pooled_embedding)
+
+        # Re-add the protected tokens to pooled_embeddings
+        pooled_embeddings.extend(protected_embeddings)
+
+        # Store the length of the pooled tokens (number of total tokens - number of tokens from previous passages)
+        pooled_token_lengths.append(len(pooled_embeddings) - sum(pooled_token_lengths))
+        start_idx += token_length
+
+    pooled_embeddings = torch.stack(pooled_embeddings)
+    return pooled_embeddings, pooled_token_lengths
 
 
 def expand_parameter(x: int, a: float, b: float, c: float) -> int:
