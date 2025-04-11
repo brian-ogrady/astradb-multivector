@@ -160,11 +160,10 @@ class LateInteractionPipeline:
         schema = (
             CreateTableDefinition.builder()
             .add_column("doc_id", ColumnType.UUID)
-            .add_column("page_number", ColumnType.INT)
             .add_column("token_id", ColumnType.UUID)
             .add_vector_column(token_column_name, dimension=self.model.dim)
             .add_partition_by(["doc_id"])
-            .add_partition_sort({"page_number": SortMode.ASCENDING})
+            .add_partition_sort({"token_id": SortMode.ASCENDING})
         ).build()
         
         logger.debug(f"Creating token table: {self.token_table_name} with dimension {self.model.dim}")
@@ -322,7 +321,7 @@ class LateInteractionPipeline:
     
     async def _index_token_embeddings(
         self, 
-        doc_ids: Union[uuid.UUID, List[uuid.UUID]], 
+        doc_id: uuid.UUID, 
         embeddings: Union[torch.Tensor, List[torch.Tensor]],
         db_concurrency: int = None,
         **kwargs,
@@ -347,14 +346,9 @@ class LateInteractionPipeline:
             ValueError: If input validation fails
             TypeError: If embeddings are not of the expected type
         """
-        if not isinstance(doc_ids, list):
-            doc_ids = [doc_ids]
         
         if not isinstance(embeddings, list):
             embeddings = [embeddings]
-        
-        if len(doc_ids) != len(embeddings):
-            raise ValueError(f"Number of doc_ids ({len(doc_ids)}) must match number of embeddings ({len(embeddings)})")
         
         for i, embedding in enumerate(embeddings):
             if not isinstance(embedding, torch.Tensor):
@@ -367,11 +361,11 @@ class LateInteractionPipeline:
                 raise ValueError(f"Embedding dimension mismatch at index {i}. "
                                 f"Expected {self.model.dim}, got {embedding.shape[1]}")
         
-        logger.debug(f"Indexing token embeddings for {len(doc_ids)} documents")
+        logger.debug(f"Indexing token embeddings for document {doc_id}")
         all_token_ids = []
         all_insertions = []
         
-        for _, (doc_id, embedding_tensor) in enumerate(zip(doc_ids, embeddings)):
+        for _, embedding_tensor in enumerate(embeddings):
             embeddings_np = self.model._embeddings_to_numpy(embedding_tensor)
             doc_token_ids = []
             
@@ -398,7 +392,7 @@ class LateInteractionPipeline:
                 chunk_size=5,
                 **kwargs,
             )
-            logger.debug(f"Completed token embeddings indexing for {len(doc_ids)} documents")
+            logger.debug(f"Completed token embeddings indexing for document {doc_id}")
         except Exception as e:
             logger.error(f"Error during token embeddings insertion: {str(e)}")
             raise

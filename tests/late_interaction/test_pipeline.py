@@ -384,41 +384,6 @@ class TestLateInteractionPipeline(unittest.TestCase):
             self.assertIn("token_id", insertion)
             self.assertIn("token_embedding", insertion)
     
-    async def test_index_token_embeddings_multiple_docs(self):
-        """
-        Test token embeddings indexing for multiple documents.
-        
-        Verifies that token embeddings for multiple documents are correctly
-        processed and stored with appropriate document associations.
-        """
-        await self.async_setup()
-        
-        doc_ids = [uuid.uuid4(), uuid.uuid4()]
-        embeddings = [
-            torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
-            torch.tensor([[0.0, 0.0, 1.0, 0.0]])
-        ]
-        
-        self.model._embeddings_to_numpy = MagicMock(side_effect=[
-            np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]]),
-            np.array([[0.0, 0.0, 1.0, 0.0]])
-        ])
-        
-        token_ids = await self.pipeline._index_token_embeddings(doc_ids, embeddings)
-        
-        self.assertEqual(len(token_ids), 2)
-        self.assertEqual(len(token_ids[0]), 2)
-        self.assertEqual(len(token_ids[1]), 1)
-        
-        self.pipeline._token_table.insert_many.assert_called_once()
-        insertions = self.pipeline._token_table.insert_many.call_args[0][0]
-        self.assertEqual(len(insertions), 3)
-        
-        self.assertEqual(insertions[0]["doc_id"], doc_ids[0])
-        self.assertEqual(insertions[1]["doc_id"], doc_ids[0])
-        
-        self.assertEqual(insertions[2]["doc_id"], doc_ids[1])
-    
     async def test_index_token_embeddings_validation(self):
         """
         Test token embeddings indexing validation.
@@ -429,13 +394,7 @@ class TestLateInteractionPipeline(unittest.TestCase):
         """
         await self.async_setup()
         
-        doc_ids = [uuid.uuid4(), uuid.uuid4()]
-        embeddings = [torch.tensor([[1.0, 0.0, 0.0, 0.0]])]
-        
-        with self.assertRaises(ValueError):
-            await self.pipeline._index_token_embeddings(doc_ids, embeddings)
-        
-        with self.assertRaises(ValueError):
+        with self.assertRaises(TypeError):
             await self.pipeline._index_token_embeddings(
                 uuid.uuid4(),
                 [1.0, 0.0, 0.0, 0.0]
