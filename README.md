@@ -235,12 +235,12 @@ The late interaction architecture splits documents into token-level embeddings a
 
 ```
 ┌────────────────────────────────────────┐     ┌────────────────────────────────────────┐
-│ Table: my_colbert_docs                 │     │ Table: my_colbert_tokens               │
+│ Table: my_colpali_docs                 │     │ Table: my_colpali_tokens               │
 ├──────────┬───────────────────────────┐ │     ├──────────┬──────────┬─────────────────┐│
-│ doc_id   │ content                   │ │     │ doc_id   │ token_id │ token_embedding ││
+│ doc_id   │ content      | pg no.     │ │     │ doc_id   │ token_id │ token_embedding ││
 ├──────────┼───────────────────────────┤ │     ├──────────┼──────────┼─────────────────┤│
-│ UUID-1   │ "Example document content"│ │     │ UUID-1   │ UUID-1.1 │ [0.1, 0.2, ...] ││
-│ UUID-2   │ "Another document example"│ │     │ UUID-1   │ UUID-1.2 │ [0.3, 0.4, ...] ││
+│ UUID-1   │ <<reference>>│ 1          | |     │ UUID-1   │ UUID-1.1 │ [0.1, 0.2, ...] ││
+│ UUID-2   │ <<reference>>│ 2          | │     | UUID-1   │ UUID-1.2 │ [0.3, 0.4, ...] ││
 └──────────┴───────────────────────────┘ │     │ UUID-1   │ UUID-1.3 │ [0.5, 0.6, ...] ││
                                          │     │ UUID-2   │ UUID-2.1 │ [0.7, 0.8, ...] ││
                                          │     │ UUID-2   │ UUID-2.2 │ [0.9, 1.0, ...] ││
@@ -265,7 +265,7 @@ Key implementation details:
 - Both `doc_id` and `token_id` are UUID types for maximum compatibility
 - `doc_id` is used as the partition key to efficiently retrieve all tokens for a document
 - Token table uses a vector index on `token_embedding` for similarity search
-- Documents are stored with their original content for retrieval and verification
+- Documents are stored with their original content or a reference for retrieval and verification
 
 ## Gutenberg Example
 
